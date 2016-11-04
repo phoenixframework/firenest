@@ -4,7 +4,7 @@ defmodule Firenest.PubSub do
   """
 
   @type pubsub :: atom()
-  @type topic :: binary() | atom()
+  @type topic :: binary()
   @type from :: pid()
 
   defmodule BroadcastError do
@@ -68,13 +68,13 @@ defmodule Firenest.PubSub do
   end
 
   @spec subscribe(pubsub, topic, term) :: :ok
-  def subscribe(pubsub, topic, value \\ nil) when is_atom(pubsub) do
+  def subscribe(pubsub, topic, value \\ nil) when is_atom(pubsub) and is_binary(topic) do
     {:ok, _} = Registry.register(pubsub, topic, value)
     :ok
   end
 
   @spec unsubscribe(pubsub, topic) :: :ok
-  def unsubscribe(pubsub, topic) when is_atom(pubsub) do
+  def unsubscribe(pubsub, topic) when is_atom(pubsub) and is_binary(topic) do
     Registry.unregister(pubsub, topic)
   end
 
@@ -126,7 +126,10 @@ defmodule Firenest.PubSub do
 
   defp dispatch(pubsub, from, topics, message, module, function) do
     mfa = {module, function, [from, message]}
-    for topic <- topics, do: Registry.dispatch(pubsub, topic, mfa)
+    Enum.each topics, fn
+      topic when is_binary(topic) -> Registry.dispatch(pubsub, topic, mfa)
+      topic -> raise ArgumentError, "topic must be a string, got: #{inspect topic}"
+    end
     :ok
   end
 end
