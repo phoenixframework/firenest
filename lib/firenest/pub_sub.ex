@@ -3,6 +3,10 @@ defmodule Firenest.PubSub do
   A distributed pubsub implementation.
   """
 
+  @type pubsub :: atom()
+  @type topic :: binary() | atom()
+  @type from :: pid()
+
   defmodule BroadcastError do
     defexception [:message]
   end
@@ -38,6 +42,7 @@ defmodule Firenest.PubSub do
     end
   end
 
+  @spec start_link(pubsub, keyword()) :: {:ok, pid} | {:error, term}
   def start_link(pubsub, options) when is_atom(pubsub)  do
     topology = options[:topology]
     partitions = options[:partitions] || (System.schedulers_online |> div(4) |> max(1))
@@ -62,21 +67,26 @@ defmodule Firenest.PubSub do
     Supervisor.start_link(children, strategy: :rest_for_one, name: supervisor)
   end
 
-  def subscribe(pubsub, topic, value \\ nil) do
+  @spec subscribe(pubsub, topic, term) :: :ok
+  def subscribe(pubsub, topic, value \\ nil) when is_atom(pubsub) do
     {:ok, _} = Registry.register(pubsub, topic, value)
     :ok
   end
 
-  def unsubscribe(pubsub, topic) do
+  @spec unsubscribe(pubsub, topic) :: :ok
+  def unsubscribe(pubsub, topic) when is_atom(pubsub) do
     Registry.unregister(pubsub, topic)
   end
 
-  def broadcast(pubsub, topic, message) do
-    {topology, dispatcher, module, function} = Registry.meta(pubsub, :pubsub)
-    dispatch(pubsub, :none, topic, message, module, function)
-    Firenest.Topology.broadcast(topology, dispatcher, {:broadcast, topic, message})
+  @spec broadcast(pubsub, topic | [topic], term) :: :ok | {:error, term}
+  def broadcast(pubsub, topic, message) when is_atom(pubsub) do
+    topics = List.wrap(topic)
+    {:ok, {topology, dispatcher, module, function}} = Registry.meta(pubsub, :pubsub)
+    dispatch(pubsub, :none, topics, message, module, function)
+    Firenest.Topology.broadcast(topology, dispatcher, {:broadcast, topics, message})
   end
 
+  @spec broadcast!(pubsub, topic | [topic], term) :: :ok | no_return
   def broadcast!(pubsub, topic, message) do
     case broadcast(pubsub, topic, message) do
       :ok -> :ok
@@ -84,12 +94,15 @@ defmodule Firenest.PubSub do
     end
   end
 
-  def broadcast_from(pubsub, from, topic, message) do
-    {topology, dispatcher, module, function} = Registry.meta(pubsub, :pubsub)
-    dispatch(pubsub, from, topic, message, module, function)
-    Firenest.Topology.broadcast(topology, dispatcher, {:broadcast, topic, message})
+  @spec broadcast_from(pubsub, pid, topic | [topic], term) :: :ok
+  def broadcast_from(pubsub, from, topic, message) when is_atom(pubsub) and is_pid(from) do
+    topics = List.wrap(topic)
+    {:ok, {topology, dispatcher, module, function}} = Registry.meta(pubsub, :pubsub)
+    dispatch(pubsub, from, topics, message, module, function)
+    Firenest.Topology.broadcast(topology, dispatcher, {:broadcast, topics, message})
   end
 
+  @spec broadcast_from!(pubsub, pid, topic | [topic], term) :: :ok | no_return
   def broadcast_from!(pubsub, from, topic, message) do
     case broadcast_from(pubsub, from, topic, message) do
       :ok -> :ok
@@ -97,18 +110,23 @@ defmodule Firenest.PubSub do
     end
   end
 
-  def local_broadcast(pubsub, topic, message) do
-    {_, _, module, function} = Registry.meta(pubsub, :pubsub)
-    dispatch(pubsub, :none, topic, message, module, function)
+  @spec local_broadcast(pubsub, topic | [topic], term) :: :ok
+  def local_broadcast(pubsub, topic, message) when is_atom(pubsub) do
+    topics = List.wrap(topic)
+    {:ok, {_, _, module, function}} = Registry.meta(pubsub, :pubsub)
+    dispatch(pubsub, :none, topics, message, module, function)
   end
 
-  def local_broadcast_from(pubsub, pid, topic, message) do
-    {_, _, module, function} = Registry.meta(pubsub, :pubsub)
-    dispatch(pubsub, pid, topic, message, module, function)
+  @spec local_broadcast_from(pubsub, pid, topic | [topic], term) :: :ok
+  def local_broadcast_from(pubsub, from, topic, message) when is_atom(pubsub) and is_pid(from) do
+    topics = List.wrap(topic)
+    {:ok, {_, _, module, function}} = Registry.meta(pubsub, :pubsub)
+    dispatch(pubsub, from, topics, message, module, function)
   end
 
-  defp dispatch(pubsub, from, topic, message, module, function) do
-    Registry.dispatch(pubsub, topic, {module, function, [from, message]})
+  defp dispatch(pubsub, from, topics, message, module, function) do
+    mfa = {module, function, [from, message]}
+    for topic <- topics, do: Registry.dispatch(pubsub, topic, mfa)
+    :ok
   end
 end
-

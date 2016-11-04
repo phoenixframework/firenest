@@ -57,6 +57,18 @@ defmodule Firenest.Test do
     end
   end
 
+  @doc """
+  Starts a process on the given topology nodes.
+  """
+  def start_link(nodes, module, args) do
+    case :rpc.multicall(nodes, __MODULE__, :start_link, [module, args]) do
+      {_, []}  -> :ok
+      {_, bad} -> raise "starting #{inspect module} in cluster failed on nodes #{inspect bad}"
+    end
+
+    :ok
+  end
+
   @doc false
   def start_link(module, args) do
     parent = self()
@@ -70,15 +82,6 @@ defmodule Firenest.Test do
     receive do
       ^task -> :ok
     end
-  end
-
-  defp start_link(nodes, module, args) do
-    case :rpc.multicall(nodes, __MODULE__, :start_link, [module, args]) do
-      {_, []}  -> :ok
-      {_, bad} -> raise "starting #{inspect module} in cluster failed on nodes #{inspect bad}"
-    end
-
-    :ok
   end
 
   defp spawn_node(node_host) do
