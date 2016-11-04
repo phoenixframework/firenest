@@ -49,7 +49,7 @@ defmodule Firenest.Topology do
   @doc """
   Broadcasts `message` to all processes named `name` on all other nodes in `topology`.
   """
-  @callback broadcast(topology, name, message :: term) :: :ok
+  @callback broadcast(topology, name, message :: term) :: :ok | {:error, term}
 
   @doc """
   Starts a topology with name `topology` and the given `options`.
@@ -72,11 +72,11 @@ defmodule Firenest.Topology do
 
   """
   @spec start_link(topology, keyword()) :: {:ok, pid} | {:error, term}
-  def start_link(topology, options) do
+  def start_link(topology, options) when is_atom(topology) do
     {adapter, options} = Keyword.pop(options, :adapter)
 
     unless adapter do
-      raise ArgumentError, "Firenest.Topology.start_link/2 expects an :adapter as option"
+      raise ArgumentError, "Firenest.Topology.start_link/2 expects :adapter as option"
     end
 
     adapter.start_link(topology, options)
@@ -114,9 +114,9 @@ defmodule Firenest.Topology do
   The message is not broadcast to the process named `name`
   in the current node.
 
-  Always returns `:ok`.
+  Returns `:ok` or `{:error, reason}`.
   """
-  @callback broadcast(topology, name, message :: term) :: :ok
+  @callback broadcast(topology, name, message :: term) :: :ok | {:error, term}
   def broadcast(topology, name, message) when is_atom(topology) and is_atom(name) do
     adapter!(topology).broadcast(topology, name, message)
   end

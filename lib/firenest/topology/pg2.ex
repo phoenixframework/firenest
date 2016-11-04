@@ -19,10 +19,12 @@ defmodule Firenest.Topology.PG2 do
   ## Topology callbacks
 
   def broadcast(topology, name, message) when is_atom(name) do
-    for node <- nodes(topology) do
-      send({name, node}, message)
+    case get_nodes(topology) do
+      {:ok, nodes} ->
+        Enum.each(nodes, &send({name, &1}, message))
+      {:error, _} = error ->
+        error
     end
-    :ok
   end
 
   def node(_topology) do
@@ -30,10 +32,19 @@ defmodule Firenest.Topology.PG2 do
   end
 
   def nodes(topology) do
-    pg2_key(topology)
-    |> :pg2.get_members()
-    |> Enum.map(&Kernel.node/1)
-    |> List.delete(Kernel.node())
+    case get_nodes(topology) do
+      {:ok, nodes} -> nodes
+      {:error, _} -> []
+    end
+  end
+
+  defp get_nodes(topology) do
+    case :pg2.get_members(pg2_key(topology)) do
+      pids when is_list(pids) ->
+        {:ok, pids |> Enum.map(&Kernel.node/1) |> List.delete(Kernel.node())}
+      {:error, _} = error ->
+        error
+    end
   end
 
   ## Supervisor callbacks
