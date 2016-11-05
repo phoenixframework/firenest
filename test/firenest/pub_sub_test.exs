@@ -168,6 +168,18 @@ defmodule Firenest.PubSubTest do
     end
   end
 
+  describe "topics/2" do
+    test "unregisters duplicate topics at once", %{pubsub: pubsub, topic: topic} do
+      assert P.topics(pubsub, self()) == [topic]
+      P.unsubscribe(pubsub, topic)
+      assert P.topics(pubsub, self()) == []
+      P.subscribe(pubsub, "hello")
+      P.subscribe(pubsub, "world")
+      assert P.topics(pubsub, self()) |> Enum.sort() == ["hello", "world"]
+      assert P.topics(pubsub, spawn(fn -> :ok end)) == []
+    end
+  end
+
   describe "start_link/2" do
     test "supports and validates :partitions option", %{topology: topology} do
       Process.flag(:trap_exit, true)

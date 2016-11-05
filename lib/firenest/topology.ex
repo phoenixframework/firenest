@@ -21,7 +21,7 @@ defmodule Firenest.Topology do
   """
 
   @typedoc "An atom identifying the topology name."
-  @type topology :: atom
+  @type t :: atom
 
   @typedoc "How named processes are identified by topology."
   @type name :: atom
@@ -34,22 +34,22 @@ defmodule Firenest.Topology do
   under it, pointing to a module that implements the topology
   callbacks.
   """
-  @callback start_link(topology, keyword()) :: {:ok, pid} | {:error, term}
+  @callback start_link(t, keyword()) :: {:ok, pid} | {:error, term}
 
   @doc """
   Returns the name of the current node in `topology`.
   """
-  @callback node(topology) :: node()
+  @callback node(t) :: node()
 
   @doc """
   Returns all other nodes in the `topology` (does not include the current node).
   """
-  @callback nodes(topology) :: [node()]
+  @callback nodes(t) :: [node()]
 
   @doc """
   Broadcasts `message` to all processes named `name` on all other nodes in `topology`.
   """
-  @callback broadcast(topology, name, message :: term) :: :ok | {:error, term}
+  @callback broadcast(t, name, message :: term) :: :ok | {:error, term}
 
   @doc """
   Starts a topology with name `topology` and the given `options`.
@@ -71,7 +71,7 @@ defmodule Firenest.Topology do
       Firenest.Topology.start_link(MyApp.Topology, adapter: Firenest.Topology.PG2)
 
   """
-  @spec start_link(topology, keyword()) :: {:ok, pid} | {:error, term}
+  @spec start_link(t, keyword()) :: {:ok, pid} | {:error, term}
   def start_link(topology, options) when is_atom(topology) do
     {adapter, options} = Keyword.pop(options, :adapter)
 
@@ -91,7 +91,7 @@ defmodule Firenest.Topology do
   If the node is not connected to any other node, it may return
   `:nonode@nohost`.
   """
-  @spec node(topology) :: node()
+  @spec node(t) :: node()
   def node(topology) when is_atom(topology) do
     adapter!(topology).node(topology)
   end
@@ -103,7 +103,7 @@ defmodule Firenest.Topology do
       [:bar@example, :baz@example]
 
   """
-  @callback nodes(topology) :: [node()]
+  @spec nodes(t) :: [node()]
   def nodes(topology) when is_atom(topology) do
     adapter!(topology).nodes(topology)
   end
@@ -116,7 +116,7 @@ defmodule Firenest.Topology do
 
   Returns `:ok` or `{:error, reason}`.
   """
-  @callback broadcast(topology, name, message :: term) :: :ok | {:error, term}
+  @spec broadcast(t, name, message :: term) :: :ok | {:error, term}
   def broadcast(topology, name, message) when is_atom(topology) and is_atom(name) do
     adapter!(topology).broadcast(topology, name, message)
   end
