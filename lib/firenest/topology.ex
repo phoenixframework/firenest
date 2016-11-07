@@ -17,7 +17,8 @@ defmodule Firenest.Topology do
   via the `start_link/2` function, alongside the proper adapter.
   All topologies are also locally named.
 
-  Firenest ships with a default topology called `Firenest.Topology.PG2`.
+  Firenest ships with a default topology called `Firenest.Topology.Erlang`
+  that uses the Erlang distribution to build a fully meshed topology.
   """
 
   @typedoc "An atom identifying the topology name."
@@ -64,11 +65,11 @@ defmodule Firenest.Topology do
 
   Most times the topology is started as part of your supervision tree:
 
-      supervisor(Firenest.Topology, [MyApp.Topology, [adapter: Firenest.Topology.PG2]])
+      supervisor(Firenest.Topology, [MyApp.Topology, [adapter: Firenest.Topology.Erlang]])
 
   which is equivalent to calling:
 
-      Firenest.Topology.start_link(MyApp.Topology, adapter: Firenest.Topology.PG2)
+      Firenest.Topology.start_link(MyApp.Topology, adapter: Firenest.Topology.Erlang)
 
   """
   @spec start_link(t, keyword()) :: {:ok, pid} | {:error, term}

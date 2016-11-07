@@ -12,7 +12,7 @@ defmodule Firenest.PubSub do
   alongside the desired topology:
 
       children = [
-        supervisor(Firenest.Topology, [MyApp.Topology, adapter: Firenest.Topology.PG2]),
+        supervisor(Firenest.Topology, [MyApp.Topology, adapter: Firenest.Topology.Erlang]),
         supervisor(Firenest.PubSub, [MyApp.PubSub, topology: MyApp.Topology])
       ]
 
