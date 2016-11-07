@@ -43,6 +43,13 @@ end
 defmodule Firenest.Topology.Erlang.Discovery do
   @moduledoc false
 
+  # Most times we end-up monitoring the same node twice.
+  # Once for its ping and another for its pong. Although
+  # this is non-ideal, it was done as such to avoid the
+  # pitfalls of pid reuse. We could simplify those if there
+  # are guarantees that :DOWN messages are delivered before
+  # :nodedown and if :nodedown are delivered before :nodeup.
+
   use GenServer
 
   def start_link(topology, discovery) do
@@ -79,15 +86,10 @@ defmodule Firenest.Topology.Erlang.Discovery do
   end
 
   defp add_node(%{nodes: nodes, topology: topology} = state, pid) do
+    ref = Process.monitor(pid)
     node = node(pid)
-
-    if node in Firenest.Topology.Erlang.nodes(topology) do
-      state
-    else
-      ref = Process.monitor(pid)
-      nodes = Map.put(nodes, ref, node)
-      %{state | nodes: update_topology(topology, nodes)}
-    end
+    nodes = Map.put(nodes, ref, node)
+    %{state | nodes: update_topology(topology, nodes)}
   end
 
   defp delete_node(%{nodes: nodes, topology: topology} = state, ref) do
@@ -96,7 +98,7 @@ defmodule Firenest.Topology.Erlang.Discovery do
   end
 
   defp update_topology(topology, nodes) do
-    true = :ets.insert(topology, {:nodes, Map.values(nodes)})
+    true = :ets.insert(topology, {:nodes, nodes |> Map.values() |> Enum.uniq})
     nodes
   end
 
