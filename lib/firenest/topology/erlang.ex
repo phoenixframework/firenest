@@ -43,13 +43,15 @@ end
 defmodule Firenest.Topology.Erlang.Discovery do
   @moduledoc false
 
+  use GenServer
+
   def start_link(topology, discovery) do
     GenServer.start_link(__MODULE__, {topology, discovery}, name: discovery)
   end
 
   def init({topology, discovery}) do
     :ok = :net_kernel.monitor_nodes(true, node_type: :all)
-    nodes = update_topology(topology, [])
+    nodes = update_topology(topology, %{})
     Enum.each(Node.list(), &ping(&1, discovery))
     {:ok, %{topology: topology, discovery: discovery, nodes: nodes}}
   end
@@ -59,39 +61,50 @@ defmodule Firenest.Topology.Erlang.Discovery do
     {:noreply, state}
   end
 
-  def handle_info({:nodedown, node, _}, state) do
-    {:noreply, delete_node(state, node)}
+  def handle_info({:nodedown, _, _}, state) do
+    {:noreply, state}
   end
 
-  def handle_info({:ping, node}, %{discovery: discovery} = state) do
-    pong(node, discovery)
-    {:noreply, add_node(state, node)}
+  def handle_info({:ping, pid}, state) do
+    pong(pid)
+    {:noreply, add_node(state, pid)}
   end
 
-  def handle_info({:pong, node}, state) do
-    {:noreply, add_node(state, node)}
+  def handle_info({:pong, pid}, state) do
+    {:noreply, add_node(state, pid)}
   end
 
-  defp add_node(%{nodes: nodes, topology: topology} = state, node) do
-    nodes = :ordsets.add_element(node, nodes)
-    %{state | nodes: update_topology(topology, nodes)}
+  def handle_info({:DOWN, ref, _, pid, _}, state) when node(pid) != node() do
+    {:noreply, delete_node(state, ref)}
   end
 
-  defp delete_node(%{nodes: nodes, topology: topology} = state, node) do
-    nodes = :ordsets.del_element(node, nodes)
+  defp add_node(%{nodes: nodes, topology: topology} = state, pid) do
+    node = node(pid)
+
+    if node in Firenest.Topology.Erlang.nodes(topology) do
+      state
+    else
+      ref = Process.monitor(pid)
+      nodes = Map.put(nodes, ref, node)
+      %{state | nodes: update_topology(topology, nodes)}
+    end
+  end
+
+  defp delete_node(%{nodes: nodes, topology: topology} = state, ref) do
+    nodes = Map.delete(nodes, ref)
     %{state | nodes: update_topology(topology, nodes)}
   end
 
   defp update_topology(topology, nodes) do
-    true = :ets.insert(topology, {:nodes, nodes})
+    true = :ets.insert(topology, {:nodes, Map.values(nodes)})
     nodes
   end
 
   defp ping(node, discovery) do
-    send({discovery, node}, {:ping, node()})
+    send({discovery, node}, {:ping, self()})
   end
 
-  defp pong(node, discovery) do
-    send({discovery, node}, {:pong, node()})
+  defp pong(pid) do
+    send(pid, {:pong, self()})
   end
 end
