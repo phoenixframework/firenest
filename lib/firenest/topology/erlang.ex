@@ -43,28 +43,25 @@ end
 defmodule Firenest.Topology.Erlang.Discovery do
   @moduledoc false
 
-  # Most times we end-up monitoring the same node twice.
-  # Once for its ping and another for its pong. Although
-  # this is non-ideal, it was done as such to avoid the
-  # pitfalls of pid reuse. We could simplify those if there
-  # are guarantees that :DOWN messages are delivered before
-  # :nodedown and if :nodedown are delivered before :nodeup.
-
   use GenServer
 
   def start_link(topology, discovery) do
     GenServer.start_link(__MODULE__, {topology, discovery}, name: discovery)
   end
 
+  ## Callbacks
+
   def init({topology, discovery}) do
     :ok = :net_kernel.monitor_nodes(true, node_type: :all)
-    nodes = update_topology(topology, %{})
-    Enum.each(Node.list(), &ping(&1, discovery))
-    {:ok, %{topology: topology, discovery: discovery, nodes: nodes}}
+    update_topology(topology, %{})
+
+    id = id()
+    Enum.each(Node.list(), &ping(&1, discovery, id))
+    {:ok, %{topology: topology, discovery: discovery, nodes: %{}, id: id}}
   end
 
-  def handle_info({:nodeup, node, _}, %{discovery: discovery} = state) do
-    ping(node, discovery)
+  def handle_info({:nodeup, node, _}, %{discovery: discovery, id: id} = state) do
+    ping(node, discovery, id)
     {:noreply, state}
   end
 
@@ -72,41 +69,73 @@ defmodule Firenest.Topology.Erlang.Discovery do
     {:noreply, state}
   end
 
-  def handle_info({:ping, pid}, state) do
-    pong(pid)
-    {:noreply, add_node(state, pid)}
+  def handle_info({:ping, other_id, pid}, %{id: id} = state) do
+    pong(pid, id)
+    {:noreply, add_node(state, other_id, pid)}
   end
 
-  def handle_info({:pong, pid}, state) do
-    {:noreply, add_node(state, pid)}
+  def handle_info({:pong, other_id, pid}, state) do
+    {:noreply, add_node(state, other_id, pid)}
   end
 
   def handle_info({:DOWN, ref, _, pid, _}, state) when node(pid) != node() do
-    {:noreply, delete_node(state, ref)}
+    {:noreply, delete_node(state, pid, ref)}
   end
 
-  defp add_node(%{nodes: nodes, topology: topology} = state, pid) do
-    ref = Process.monitor(pid)
+  defp ping(node, discovery, id) do
+    send({discovery, node}, {:ping, id, self()})
+  end
+
+  defp pong(pid, id) do
+    send(pid, {:pong, id, self()})
+  end
+
+  ## Helpers
+
+  defp id() do
+    {:crypto.strong_rand_bytes(12), System.system_time()}
+  end
+
+  defp add_node(%{nodes: nodes} = state, id, pid) do
     node = node(pid)
-    nodes = Map.put(nodes, ref, node)
-    %{state | nodes: update_topology(topology, nodes)}
+    case nodes do
+      %{^node => {^id, _}} ->
+        state
+      %{^node => _} ->
+        state
+        |> delete_node_and_notify(node)
+        |> add_node_and_notify(node, id, pid)
+      %{} ->
+        add_node_and_notify(state, node, id, pid)
+    end
   end
 
-  defp delete_node(%{nodes: nodes, topology: topology} = state, ref) do
-    nodes = Map.delete(nodes, ref)
-    %{state | nodes: update_topology(topology, nodes)}
+  defp add_node_and_notify(%{nodes: nodes, topology: topology} = state, node, id, pid) do
+    ref = Process.monitor(pid)
+    nodes = Map.put(nodes, node, {id, ref})
+    update_topology(topology, nodes)
+    # TODO: Deliver notification
+    %{state | nodes: nodes}
+  end
+
+  defp delete_node(%{nodes: nodes} = state, pid, ref) do
+    node = node(pid)
+    case nodes do
+      %{^node => {_, ^ref}} ->
+        delete_node_and_notify(state, node)
+      %{} ->
+        state
+    end
+  end
+
+  defp delete_node_and_notify(%{nodes: nodes, topology: topology} = state, node) do
+    nodes = Map.delete(nodes, node)
+    update_topology(topology, nodes)
+    # TODO: Deliver notification
+    %{state | nodes: nodes}
   end
 
   defp update_topology(topology, nodes) do
-    true = :ets.insert(topology, {:nodes, nodes |> Map.values() |> Enum.uniq})
-    nodes
-  end
-
-  defp ping(node, discovery) do
-    send({discovery, node}, {:ping, self()})
-  end
-
-  defp pong(pid) do
-    send(pid, {:pong, self()})
+    true = :ets.insert(topology, {:nodes, Map.keys(nodes)})
   end
 end
