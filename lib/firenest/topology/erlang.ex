@@ -1,7 +1,30 @@
 defmodule Firenest.Topology.Erlang do
   @moduledoc """
-  An implementation of Firenest.Topology that uses the
-  Erlang Distribution to build a fully meshed topology.
+  An implementation of Firenest.Topology that relies on the
+  Erlang Distribution to connect and exchange messages between
+  nodes.
+
+  ## Discovery
+
+  By default, the Erlang distribution requires nodes to be
+  connected manually. For example, assuming you start two nodes
+  with the same cookie and can reach other in the network:
+
+      nodea> iex --name "nodea@1.2.3.4" --cookie "secret"
+      nodeb> iex --name "nodeb@5.6.7.8" --cookie "secret"
+
+  You can manually connect both nodes by calling
+  `Node.connect(:"nodea@1.2.3.4")` from node B or by calling
+  `Node.connect(:"nodeb@5.6.7.8")` from node A. Topologies also
+  provide `connect/2` and `disconnect/2` functions which, for this
+  particular topology, is the same as calling the `Node` functions
+  above.
+
+  Projects like [libcluster](https://github.com/bitwalker/libcluster)
+  are able to automate and manage the connection between nodes by
+  doing UDP multicasts, by relying on orchestration tools such as
+  Kubernetes, or other. It is recommended choice for those who do
+  not want to manually manage their own list of nodes.
   """
 
   use Supervisor
@@ -12,6 +35,16 @@ defmodule Firenest.Topology.Erlang do
   end
 
   ## Topology callbacks
+
+  # TODO: We need to subscribe to node up events from discovery
+  def connect(_topology, node) when is_atom(node) do
+    :net_kernel.connect(node)
+  end
+
+  # TODO: We need to subscribe to node down events from discovery
+  def disconnect(topology, node) when is_atom(node) do
+    :net_kernel.disconnect(node)
+  end
 
   def broadcast(topology, name, message) when is_atom(name) do
     topology |> nodes() |> Enum.each(&send({name, &1}, message))

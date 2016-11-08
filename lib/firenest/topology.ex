@@ -53,6 +53,25 @@ defmodule Firenest.Topology do
   @callback broadcast(t, name, message :: term) :: :ok | {:error, term}
 
   @doc """
+  Asks the topology to connect to the given node.
+
+  It returns `true` in case of success (or if the node is already
+  connected), `false` in case of failure and `:ignored` if the node
+  is not online or if the operation is not supported.
+  """
+  @callback connect(t, node) :: true | false | :ignored
+
+  @doc """
+  Asks the topology to disconnect from the given node.
+
+  It returns `true` if the nodes are no longer connected. This
+  means it will also return `true` if nodes were never connected in
+  the first place. It returns `:ignored` if the node is not online
+  or if the operation is not supported.
+  """
+  @callback disconnect(t, node) :: true | false | :ignored
+
+  @doc """
   Starts a topology with name `topology` and the given `options`.
 
   The `:adapter` key is required as part of `options`. All other
