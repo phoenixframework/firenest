@@ -60,7 +60,9 @@ defmodule Firenest.PubSubTest do
       %{topology: topology, evaluator: evaluator, pubsub: pubsub, topic: topic} = config
 
       T.broadcast(topology, evaluator, {:eval_quoted, quote do
-        P.broadcast(unquote(pubsub), unquote(topic), {:reply, T.node(unquote(topology))})
+        if Process.whereis(unquote(pubsub)) do
+          P.broadcast(unquote(pubsub), unquote(topic), {:reply, T.node(unquote(topology))})
+        end
       end})
 
       assert_receive {:reply, :"second@127.0.0.1"}
@@ -95,7 +97,9 @@ defmodule Firenest.PubSubTest do
       %{topology: topology, evaluator: evaluator, pubsub: pubsub, topic: topic} = config
 
       T.broadcast(topology, evaluator, {:eval_quoted, quote do
-        P.broadcast_from(unquote(pubsub), self(), unquote(topic), {:reply, T.node(unquote(topology))})
+        if Process.whereis(unquote(pubsub)) do
+          P.broadcast_from(unquote(pubsub), self(), unquote(topic), {:reply, T.node(unquote(topology))})
+        end
       end})
 
       assert_receive {:reply, :"second@127.0.0.1"}

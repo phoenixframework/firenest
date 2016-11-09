@@ -30,42 +30,47 @@ defmodule Firenest.Test do
   end
 
   @doc """
-  Starts a Firenest topology named `Firenest.Test` on the given nodes.
-
-  It also starts a process named `Firenest.Test.Evaluator` that
-  evaluates messages in the format of `{:eval_quoted, quoted}`.
+  Sets up the current node as the boot server.
   """
-  def spawn([head | tail] = nodes, options) do
-    # Turn node into a distributed node with the given long name
-    case :net_kernel.start([head]) do
+  def start_boot_server(node) do
+    case :net_kernel.start([node]) do
       {:ok, _} ->
         # Allow spawned nodes to fetch all code from this node
         :erl_boot_server.start([])
         {:ok, ipv4} = :inet.parse_ipv4_address('127.0.0.1')
         :erl_boot_server.add_slave(ipv4)
-
-        tail
-        |> Enum.map(&Task.async(fn -> spawn_node(&1) end))
-        |> Enum.map(&Task.await(&1, 30_000))
-
-        start_link(nodes, Firenest.Topology, [Firenest.Test, options])
-        start_link(nodes, Evaluator, [])
-
+        :ok
       {:error, _} ->
         raise "make sure epmd is running before starting the test suite. " <>
-              "Running `elixir --sname foo` or `epmd -daemon` is usually enough."
+              "Running `elixir --sname foo` or `epmd -daemon` once is usually enough."
     end
   end
 
   @doc """
-  Starts a process on the given topology nodes.
+  Spawns the given nodes.
+  """
+  def spawn_nodes(children) do
+    children
+    |> Enum.map(&Task.async(fn -> spawn_node(&1) end))
+    |> Enum.map(&Task.await(&1, 30_000))
+  end
+
+  @doc """
+  Starts firenest on the given nodes.
+  """
+  def start_firenest(nodes, options) do
+    start_link(nodes, Firenest.Topology, [Firenest.Test, options])
+    start_link(nodes, Evaluator, [])
+  end
+
+  @doc """
+  Starts a process given by module and args on the given nodes.
   """
   def start_link(nodes, module, args) do
     case :rpc.multicall(nodes, __MODULE__, :start_link, [module, args]) do
       {_, []}  -> :ok
       {_, bad} -> raise "starting #{inspect module} in cluster failed on nodes #{inspect bad}"
     end
-
     :ok
   end
 

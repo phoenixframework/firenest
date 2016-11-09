@@ -27,23 +27,75 @@ defmodule Firenest.Topology.Erlang do
   not want to manually manage their own list of nodes.
   """
 
-  use Supervisor
-  @behaviour Firenest.Topology
+  defmodule Supervisor do
+    @moduledoc false
 
-  def start_link(topology, opts) do
-    Supervisor.start_link(__MODULE__, {topology, opts}, name: topology)
+    use Elixir.Supervisor
+
+    def start_link(topology, opts) do
+      name = Module.concat(topology, "Supervisor")
+      Elixir.Supervisor.start_link(__MODULE__, {topology, opts}, name: name)
+    end
+
+    def init({topology, _opts}) do
+      ^topology = :ets.new(topology, [:set, :public, :named_table, read_concurrency: true])
+      true = :ets.insert(topology, [adapter: Firenest.Topology.Erlang])
+
+      children = [
+        worker(GenServer, [Firenest.Topology.Erlang, topology, [name: topology]])
+      ]
+
+      supervise(children, strategy: :one_for_one)
+    end
   end
 
   ## Topology callbacks
 
-  # TODO: We need to subscribe to node up events from discovery
-  def connect(_topology, node) when is_atom(node) do
-    :net_kernel.connect(node)
+  @behaviour Firenest.Topology
+  @timeout 5000
+
+  defdelegate start_link(topology, opts), to: Supervisor
+
+  def subscribe(topology, pid) when is_pid(pid) do
+    GenServer.call(topology, {:subscribe, pid})
   end
 
-  # TODO: We need to subscribe to node down events from discovery
+  def unsubscribe(topology, ref) when is_reference(ref) do
+    GenServer.call(topology, {:unsubscribe, ref})
+  end
+
+  def connect(topology, node) when is_atom(node) do
+    fn ->
+      subscribe(topology, self())
+      case :net_kernel.connect(node) do
+        true -> node in nodes(topology) or wait_until({:nodeup, node})
+        false -> false
+        :ignored -> :ignored
+      end
+    end
+    |> Task.async()
+    |> Task.await(:infinity)
+  end
+
   def disconnect(topology, node) when is_atom(node) do
-    :net_kernel.disconnect(node)
+    fn ->
+      subscribe(topology, self())
+      case node in nodes(topology) and :net_kernel.disconnect(node) do
+        true -> wait_until({:nodedown, node})
+        false -> false
+        :ignored -> :ignored
+      end
+    end
+    |> Task.async()
+    |> Task.await(:infinity)
+  end
+
+  defp wait_until(msg) do
+    receive do
+      ^msg -> true
+    after
+      @timeout -> false
+    end
   end
 
   def broadcast(topology, name, message) when is_atom(name) do
@@ -51,50 +103,40 @@ defmodule Firenest.Topology.Erlang do
   end
 
   def node(_topology) do
-    node()
+    Kernel.node()
   end
 
   def nodes(topology) do
     :ets.lookup_element(topology, :nodes, 2)
   end
 
-  ## Supervisor callbacks
-
-  @doc false
-  def init({topology, _opts}) do
-    ^topology = :ets.new(topology, [:set, :public, :named_table, read_concurrency: true])
-    true = :ets.insert(topology, [adapter: __MODULE__])
-
-    children = [
-      worker(Firenest.Topology.Erlang.Discovery, [topology, Module.concat(topology, "Discovery")])
-    ]
-
-    supervise(children, strategy: :one_for_one)
-  end
-end
-
-defmodule Firenest.Topology.Erlang.Discovery do
-  @moduledoc false
+  ## GenServer callbacks
 
   use GenServer
 
-  def start_link(topology, discovery) do
-    GenServer.start_link(__MODULE__, {topology, discovery}, name: discovery)
-  end
-
-  ## Callbacks
-
-  def init({topology, discovery}) do
+  def init(topology) do
     :ok = :net_kernel.monitor_nodes(true, node_type: :all)
     update_topology(topology, %{})
 
     id = id()
-    Enum.each(Node.list(), &ping(&1, discovery, id))
-    {:ok, %{topology: topology, discovery: discovery, nodes: %{}, id: id}}
+    Enum.each(Node.list(), &ping(&1, topology, id))
+    {:ok, %{topology: topology, nodes: %{}, id: id, subscribers: %{}}}
   end
 
-  def handle_info({:nodeup, node, _}, %{discovery: discovery, id: id} = state) do
-    ping(node, discovery, id)
+  def handle_call({:subscribe, pid}, _from, state) do
+    ref = Process.monitor(pid)
+    state = put_in(state.subscribers[ref], pid)
+    {:reply, ref, state}
+  end
+
+  def handle_call({:unsubscribe, ref}, _from, state) do
+    {_, state} = pop_in(state.subscribers[ref])
+    {:noreply, :ok, state}
+  end
+
+  @doc false
+  def handle_info({:nodeup, node, _}, %{topology: topology, id: id} = state) do
+    ping(node, topology, id)
     {:noreply, state}
   end
 
@@ -111,26 +153,29 @@ defmodule Firenest.Topology.Erlang.Discovery do
     {:noreply, add_node(state, other_id, pid)}
   end
 
-  def handle_info({:DOWN, ref, _, pid, _}, state) when node(pid) != node() do
+  def handle_info({:DOWN, ref, _, pid, _}, state) when Kernel.node(pid) != Kernel.node() do
     {:noreply, delete_node(state, pid, ref)}
   end
 
-  defp ping(node, discovery, id) do
-    send({discovery, node}, {:ping, id, self()})
+  def handle_info({:DOWN, ref, _, _, _}, state) do
+    {_, state} = pop_in(state.subscribers[ref])
+    {:noreply, state}
+  end
+
+  defp ping(node, topology, id) do
+    send({topology, node}, {:ping, id, self()})
   end
 
   defp pong(pid, id) do
     send(pid, {:pong, id, self()})
   end
 
-  ## Helpers
-
   defp id() do
     {:crypto.strong_rand_bytes(12), System.system_time()}
   end
 
   defp add_node(%{nodes: nodes} = state, id, pid) do
-    node = node(pid)
+    node = Kernel.node(pid)
     case nodes do
       %{^node => {^id, _}} ->
         state
@@ -143,16 +188,17 @@ defmodule Firenest.Topology.Erlang.Discovery do
     end
   end
 
-  defp add_node_and_notify(%{nodes: nodes, topology: topology} = state, node, id, pid) do
+  defp add_node_and_notify(%{nodes: nodes, topology: topology, subscribers: subscribers} = state,
+                           node, id, pid) do
     ref = Process.monitor(pid)
     nodes = Map.put(nodes, node, {id, ref})
     update_topology(topology, nodes)
-    # TODO: Deliver notification
+    Enum.each(subscribers, fn {_ref, pid} -> send(pid, {:nodeup, node}) end)
     %{state | nodes: nodes}
   end
 
   defp delete_node(%{nodes: nodes} = state, pid, ref) do
-    node = node(pid)
+    node = Kernel.node(pid)
     case nodes do
       %{^node => {_, ^ref}} ->
         delete_node_and_notify(state, node)
@@ -161,10 +207,11 @@ defmodule Firenest.Topology.Erlang.Discovery do
     end
   end
 
-  defp delete_node_and_notify(%{nodes: nodes, topology: topology} = state, node) do
+  defp delete_node_and_notify(%{nodes: nodes, topology: topology, subscribers: subscribers} = state,
+                              node) do
     nodes = Map.delete(nodes, node)
     update_topology(topology, nodes)
-    # TODO: Deliver notification
+    Enum.each(subscribers, fn {_ref, pid} -> send(pid, {:nodedown, node}) end)
     %{state | nodes: nodes}
   end
 

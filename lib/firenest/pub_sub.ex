@@ -25,6 +25,10 @@ defmodule Firenest.PubSub do
       # Broadcasts a message
       Firenest.PubSub.broadcast(MyApp.PubSub, "lobby:messages", "hello world")
 
+  PubSub will always broadcast to all nodes in the topology,
+  even if they are not running the PubSub service. In case you
+  want to broadcast to a subset of your topology, consider creating
+  multiple topologies.
   """
 
   @typedoc "An atom identifying the pubsub system."

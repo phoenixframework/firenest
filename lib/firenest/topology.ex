@@ -64,12 +64,27 @@ defmodule Firenest.Topology do
   @doc """
   Asks the topology to disconnect from the given node.
 
-  It returns `true` if the nodes are no longer connected. This
-  means it will also return `true` if nodes were never connected in
-  the first place. It returns `:ignored` if the node is not online
+  It returns `true` if the nodes were connected in the past and are
+  now disconnected. It returns `:ignored` if the node is not online
   or if the operation is not supported.
   """
   @callback disconnect(t, node) :: true | false | :ignored
+
+  @doc """
+  Subscribes `pid` to the `topology` `:nodeup` and `:nodedown` events.
+
+  See the module documentation for a description of events and their
+  guarantees.
+  """
+  @callback subscribe(t, pid) :: reference
+
+  @doc """
+  Unsubscribes `ref` from the `topology` events.
+
+  See the module documentation for a description of events and their
+  guarantees.
+  """
+  @callback unsubscribe(t, reference) :: :ok
 
   @doc """
   Starts a topology with name `topology` and the given `options`.
@@ -139,6 +154,53 @@ defmodule Firenest.Topology do
   @spec broadcast(t, name, message :: term) :: :ok | {:error, term}
   def broadcast(topology, name, message) when is_atom(topology) and is_atom(name) do
     adapter!(topology).broadcast(topology, name, message)
+  end
+
+  @doc """
+  Asks the topology to connect to the given node.
+
+  It returns `true` in case of success (or if the node is already
+  connected), `false` in case of failure and `:ignored` if the node
+  is not online or if the operation is not supported.
+  """
+  @spec connect(t, node) :: true | false | :ignored
+  def connect(topology, node) do
+    adapter!(topology).connect(topology, node)
+  end
+
+  @doc """
+  Asks the topology to disconnect from the given node.
+
+  It returns `true` if the nodes are no longer connected. This
+  means it will also return `true` if nodes were never connected in
+  the first place. It returns `:ignored` if the node is not online
+  or if the operation is not supported.
+  """
+  @spec disconnect(t, node) :: true | false | :ignored
+  def disconnect(topology, node) do
+    adapter!(topology).disconnect(topology, node)
+  end
+
+  @doc """
+  Subscribes `pid` to the `topology` `:nodeup` and `:nodedown` events.
+
+  See the module documentation for a description of events and their
+  guarantees.
+  """
+  @spec subscribe(t, pid) :: reference
+  def subscribe(topology, pid) do
+    adapter!(topology).subscribe(topology, pid)
+  end
+
+  @doc """
+  Unsubscribes `ref` from the `topology` events.
+
+  See the module documentation for a description of events and their
+  guarantees.
+  """
+  @spec unsubscribe(t, reference) :: :ok
+  def unsubscribe(topology, ref) do
+    adapter!(topology).unsubscribe(topology, ref)
   end
 
   defp adapter!(name) do

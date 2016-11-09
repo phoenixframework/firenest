@@ -3,7 +3,8 @@ defmodule Firenest.TopologyTest do
   Tests for the topology API.
   """
 
-  use ExUnit.Case, async: true
+  # Must be sync because we are changing the topology.
+  use ExUnit.Case
   alias Firenest.Topology, as: T
 
   setup %{test: test} do
@@ -26,6 +27,8 @@ defmodule Firenest.TopologyTest do
   end
 
   describe "broadcast/3" do
+    @describetag :broadcast
+
     test "messages name in all known nodes except self", config do
       %{topology: topology, evaluator: evaluator, test: test} = config
 
@@ -39,6 +42,42 @@ defmodule Firenest.TopologyTest do
       assert_receive {:reply, :"third@127.0.0.1"}
       assert_receive {:reply, :"second@127.0.0.1"}
       refute_received {:reply, :"first@127.0.0.1"}
+    end
+  end
+
+  describe "connection" do
+    @node :"subscribe@127.0.0.1"
+    test "may be set and managed explicitly", %{topology: topology} do
+      ref = T.subscribe(topology, self())
+      assert is_reference(ref)
+
+      # No node yet
+      refute T.disconnect(topology, @node)
+      refute_received {:nodedown, @node}
+
+      # Start the node but not firenest
+      Firenest.Test.spawn_nodes([@node])
+      refute_received {:nodeup, @node}
+      refute @node in T.nodes(topology)
+
+      # Finally start firenest
+      Firenest.Test.start_firenest([@node], adapter: Firenest.Topology.Erlang)
+      assert_receive {:nodeup, @node}
+      assert @node in T.nodes(topology)
+
+      # Connect should still return true
+      assert T.connect(topology, @node)
+
+      # Now let's diconnect
+      assert T.disconnect(topology, @node)
+      assert_receive {:nodedown, @node}
+      refute @node in T.nodes(topology)
+
+      # And we can't connect it back because it is permanently down
+      refute T.connect(topology, @node)
+      refute_received {:nodeup, @node}
+    after
+      T.disconnect(topology, @node)
     end
   end
 end
