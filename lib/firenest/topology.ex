@@ -75,36 +75,27 @@ defmodule Firenest.Topology do
   @callback broadcast(t, name, message :: term) :: :ok | {:error, term}
 
   @doc """
-  Asks the topology to connect to the given node.
+  Sends a `message` to the process named `name` in `node` running on the `topology`.
+  """
+  @callback send(t, node, name, message :: term) :: :ok | {:error, term}
 
-  It returns `true` in case of success (or if the node is already
-  connected), `false` in case of failure and `:ignored` if the node
-  is not online or if the operation is not supported.
+  @doc """
+  Asks the topology to connect to the given node.
   """
   @callback connect(t, node) :: true | false | :ignored
 
   @doc """
   Asks the topology to disconnect from the given node.
-
-  It returns `true` if the nodes were connected in the past and are
-  now disconnected. It returns `:ignored` if the node is not online
-  or if the operation is not supported.
   """
   @callback disconnect(t, node) :: true | false | :ignored
 
   @doc """
   Subscribes `pid` to the `topology` `:nodeup` and `:nodedown` events.
-
-  See the module documentation for a description of events and their
-  guarantees.
   """
   @callback subscribe(t, pid) :: reference
 
   @doc """
   Unsubscribes `ref` from the `topology` events.
-
-  See the module documentation for a description of events and their
-  guarantees.
   """
   @callback unsubscribe(t, reference) :: :ok
 
@@ -176,6 +167,16 @@ defmodule Firenest.Topology do
   @spec broadcast(t, name, message :: term) :: :ok | {:error, term}
   def broadcast(topology, name, message) when is_atom(topology) and is_atom(name) do
     adapter!(topology).broadcast(topology, name, message)
+  end
+
+   @doc """
+  Sends `message` to processes named `name` in `node`.
+
+  Returns `:ok` or `{:error, reason}`.
+  """
+  @spec send(t, node, name, message :: term) :: :ok | {:error, term}
+  def send(topology, node, name, message) when is_atom(topology) and is_atom(node) and is_atom(name) do
+    adapter!(topology).send(topology, node, name, message)
   end
 
   @doc """

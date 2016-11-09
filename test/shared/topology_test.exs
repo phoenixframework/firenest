@@ -26,6 +26,35 @@ defmodule Firenest.TopologyTest do
     end
   end
 
+
+  describe "send/4" do
+    @describetag :broadcast
+
+    test "messages name in the given node", config do
+      %{topology: topology, evaluator: evaluator, test: test} = config
+
+      T.send(topology, :"third@127.0.0.1", evaluator, {:eval_quoted, quote do
+        T.send(unquote(topology), :"first@127.0.0.1", unquote(test), {:reply, T.node(unquote(topology))})
+      end})
+
+      assert_receive {:reply, :"third@127.0.0.1"}
+      refute_received {:reply, :"second@127.0.0.1"}
+      refute_received {:reply, :"first@127.0.0.1"}
+    end
+
+    test "messages name in the current node", config do
+      %{topology: topology, evaluator: evaluator, test: test} = config
+
+      T.send(topology, :"first@127.0.0.1", evaluator, {:eval_quoted, quote do
+        T.send(unquote(topology), :"first@127.0.0.1", unquote(test), {:reply, T.node(unquote(topology))})
+      end})
+
+      assert_receive {:reply, :"first@127.0.0.1"}
+      refute_received {:reply, :"second@127.0.0.1"}
+      refute_received {:reply, :"third@127.0.0.1"}
+    end
+  end
+
   describe "broadcast/3" do
     @describetag :broadcast
 
@@ -46,6 +75,8 @@ defmodule Firenest.TopologyTest do
   end
 
   describe "connection" do
+    @describetag :connection
+
     @node :"subscribe@127.0.0.1"
     test "may be set and managed explicitly", %{topology: topology} do
       ref = T.subscribe(topology, self())
