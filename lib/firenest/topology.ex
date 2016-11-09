@@ -19,6 +19,28 @@ defmodule Firenest.Topology do
 
   Firenest ships with a default topology called `Firenest.Topology.Erlang`
   that uses the Erlang distribution to build a fully meshed topology.
+
+  ## Subscription
+
+  It is possible for a process to subscribe to events whenever a given
+  topology changes by calling `subscribe/2`. The following events are
+  delivered with the following guarantees:
+
+    * `{:nodeup, node}` is delivered to the subscribed process whenever
+      a new node comes up. The message is guaranteed to be delivered
+      after the node is added to the list returned by `nodes/2`. There
+      is no guarantee the `{:nodeup, node}` will be delivered before
+      any messages from that node.
+
+  * `{:nodedown, node}` is delivered to the subscribed process whenever
+      a known node is down. The message is guaranteed to be delivered
+      after the node is removed from the list returned by `nodes/2`.
+      The nodedown notification is guaranteed to be delivered after all
+      messages from that node.
+
+  In a case node loses connection and reconnects (either due to network
+  partitions or because it crashed), a `:nodedown` for that node is
+  guaranteed to be delivered before `:nodeup` event.
   """
 
   @typedoc "An atom identifying the topology name."
