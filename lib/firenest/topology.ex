@@ -36,7 +36,8 @@ defmodule Firenest.Topology do
       a known node is down. The message is guaranteed to be delivered
       after the node is removed from the list returned by `nodes/2`.
       The nodedown notification is guaranteed to be delivered after all
-      messages from that node.
+      messages from that node (although it is not guaranteed to be delivered
+      before all monitoring signals).
 
   In a case node loses connection and reconnects (either due to network
   partitions or because it crashed), a `:nodedown` for that node is
@@ -172,7 +173,12 @@ defmodule Firenest.Topology do
    @doc """
   Sends `message` to processes named `name` in `node`.
 
-  Returns `:ok` or `{:error, reason}`.
+  Returns `:ok` or `{:error, reason}`. In particular,
+  `{:error, :noconnection}` must be returned if the node
+  name is not known. However, keep in mind `:ok` does
+  not guarantee the message was delivered nor processed
+  by the `name`, since `name` may have disconnected by
+  the time we send (although we don't know it yet).
   """
   @spec send(t, node, name, message :: term) :: :ok | {:error, term}
   def send(topology, node, name, message) when is_atom(topology) and is_atom(node) and is_atom(name) do

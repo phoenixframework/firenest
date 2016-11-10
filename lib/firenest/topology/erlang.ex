@@ -102,8 +102,13 @@ defmodule Firenest.Topology.Erlang do
     topology |> nodes() |> Enum.each(&send({name, &1}, message))
   end
 
-  def send(_topology, node, name, message) when is_atom(node) and is_atom(name) do
-    send({name, node}, message)
+  def send(topology, node, name, message) when is_atom(node) and is_atom(name) do
+    if node == Kernel.node() or node in nodes(topology) do
+      send({name, node}, message)
+      :ok
+    else
+      {:error, :noconnection}
+    end
   end
 
   def node(_topology) do

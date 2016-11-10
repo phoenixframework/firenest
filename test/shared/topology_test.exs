@@ -26,16 +26,15 @@ defmodule Firenest.TopologyTest do
     end
   end
 
-
   describe "send/4" do
     @describetag :broadcast
 
     test "messages name in the given node", config do
       %{topology: topology, evaluator: evaluator, test: test} = config
 
-      T.send(topology, :"third@127.0.0.1", evaluator, {:eval_quoted, quote do
+      assert T.send(topology, :"third@127.0.0.1", evaluator, {:eval_quoted, quote do
         T.send(unquote(topology), :"first@127.0.0.1", unquote(test), {:reply, T.node(unquote(topology))})
-      end})
+      end}) == :ok
 
       assert_receive {:reply, :"third@127.0.0.1"}
       refute_received {:reply, :"second@127.0.0.1"}
@@ -45,13 +44,19 @@ defmodule Firenest.TopologyTest do
     test "messages name in the current node", config do
       %{topology: topology, evaluator: evaluator, test: test} = config
 
-      T.send(topology, :"first@127.0.0.1", evaluator, {:eval_quoted, quote do
+      assert T.send(topology, :"first@127.0.0.1", evaluator, {:eval_quoted, quote do
         T.send(unquote(topology), :"first@127.0.0.1", unquote(test), {:reply, T.node(unquote(topology))})
-      end})
+      end}) == :ok
 
       assert_receive {:reply, :"first@127.0.0.1"}
       refute_received {:reply, :"second@127.0.0.1"}
       refute_received {:reply, :"third@127.0.0.1"}
+    end
+
+    test "returns error when messaging unknown node", config do
+      %{topology: topology, evaluator: evaluator} = config
+      assert T.send(topology, :"unknown@127.0.0.1", evaluator, :oops) ==
+             {:error, :noconnection}
     end
   end
 
