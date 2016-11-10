@@ -1,3 +1,5 @@
+alias Firenest.Topology
+
 defmodule Firenest.Monitor do
   @moduledoc """
   A monitoring service on top of a topology.
@@ -5,45 +7,56 @@ defmodule Firenest.Monitor do
   This is typically started by the topologies themselves.
   """
 
-  use GenServer
-  alias Firenest.Topology
-
-  defmacrop incoming(node, ref) do
-    quote do: {:incoming, unquote(node), unquote(ref)}
-  end
-
-  defmacrop outgoing(pid, name, node) do
-    quote do: {:outgoing, unquote(pid), unquote(name), unquote(node)}
-  end
+  import Supervisor.Spec
 
   def start_link(topology, monitor) do
-    GenServer.start_link(__MODULE__, {topology, monitor}, name: monitor)
+    local = monitor
+    remote = Module.concat(monitor, "Remote")
+    supervisor = Module.concat(monitor, "Supervisor")
+
+    children = [
+      worker(Firenest.Monitor.Local, [topology, local, remote]),
+      worker(Firenest.Monitor.Remote, [topology, local, remote]),
+    ]
+
+    Supervisor.start_link(children, name: supervisor, strategy: :one_for_all)
   end
 
-  def monitor(monitor, node, name) when is_atom(name) do
+  def monitor(monitor, node, name) when is_atom(node) and is_atom(name) do
     GenServer.call(monitor, {:monitor, name, node})
   end
+end
 
-  ## Callbacks
+defmodule Firenest.Monitor.Local do
+  # The lcaol process that sends requests to the remote one.
+  @moduledoc false
 
-  def init({topology, monitor}) do
+  use GenServer
+
+  def start_link(topology, local, remote) do
+    GenServer.start_link(__MODULE__, {topology, remote}, name: local)
+  end
+
+  # Callbacks
+
+  def init({topology, remote}) do
     Process.link(Process.whereis(topology))
     Topology.subscribe(topology, self())
-    {:ok, %{topology: topology, monitor: monitor, refs: %{}, outgoing: %{}, incoming: %{}}}
+    {:ok, %{topology: topology, remote: remote, refs: %{}, nodes: %{}}}
   end
 
   def handle_call({:monitor, name, node}, {pid, _},
-                  %{monitor: monitor, topology: topology, refs: refs, outgoing: outgoing} = state) do
+                  %{remote: remote, topology: topology, refs: refs, nodes: nodes} = state) do
     ref = Process.monitor(pid)
-    message = {:remote_monitor, name, Topology.node(topology), ref}
+    message = {:monitor, name, Topology.node(topology), ref}
 
-    case Topology.send(topology, node, monitor, message) do
+    case Topology.send(topology, node, remote, message) do
       :ok ->
-        refs = Map.put(refs, ref, outgoing(pid, name, node))
-        outgoing = Map.update(outgoing, node, [ref], &[ref | &1])
-        {:reply, ref, %{state | refs: refs, outgoing: outgoing}}
+        refs = Map.put(refs, ref, {pid, name, node})
+        nodes = Map.update(nodes, node, [ref], &[ref | &1])
+        {:reply, ref, %{state | refs: refs, nodes: nodes}}
       {:error, _} ->
-        send(pid, {:DOWN, ref, :process, {name, node}, :noconnection})
+        send_down(pid, ref, name, node, :noconnection)
         {:reply, ref, state}
     end
   end
@@ -52,58 +65,111 @@ defmodule Firenest.Monitor do
     {:noreply, state}
   end
 
-  def handle_info({:nodedown, node},
-                  %{outgoing: outgoing, incoming: incoming, refs: refs} = state) do
-    {entries, outgoing} = Map.pop(outgoing, node, [])
+  def handle_info({:nodedown, node}, %{nodes: nodes, refs: refs} = state) do
+    {entries, nodes} = Map.pop(nodes, node, [])
+
     refs =
       Enum.reduce(entries, refs, fn ref, acc ->
-        {outgoing(pid, name, ^node), acc} = Map.pop(acc, ref)
-        send(pid, {:DOWN, ref, :process, {name, node}, :noconnection})
+        {{pid, name, ^node}, acc} = Map.pop(acc, ref)
+        send_down(pid, ref, name, node, :noconnection)
         acc
       end)
 
-    {entries, incoming} = Map.pop(incoming, node, [])
+    {:noreply, %{state | refs: refs, nodes: nodes}}
+  end
+
+  def handle_info({:down, ref, reason}, state) do
+    case pop_in(state.refs[ref]) do
+      {{pid, name, node}, state} ->
+        state = delete_node_ref(state, node, ref)
+        send_down(pid, ref, name, node, reason)
+        {:noreply, state}
+      {nil, state} ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:DOWN, ref, _, _, _},
+                  %{topology: topology, remote: remote} = state) do
+    {{_pid, _name, node}, state} = pop_in(state.refs, ref)
+    Topology.send(topology, node, remote, {:demonitor, ref})
+    {:noreply, delete_node_ref(state, node, ref)}
+  end
+
+  defp send_down(pid, ref, name, node, reason) do
+    Process.demonitor(ref, [:flush])
+    send(pid, {:DOWN, ref, :process, {name, node}, reason})
+  end
+
+  defp delete_node_ref(state, node, ref) do
+    update_in(state.nodes[node], &(&1 && List.delete(&1, ref)))
+  end
+end
+
+defmodule Firenest.Monitor.Remote do
+  # The remote process that receives requests from other nodes.
+  @moduledoc false
+
+  use GenServer
+
+  def start_link(topology, local, remote) do
+    GenServer.start_link(__MODULE__, {topology, local}, name: remote)
+  end
+
+  # Callbacks
+
+  def init({topology, local}) do
+    Process.link(Process.whereis(topology))
+    Topology.subscribe(topology, self())
+    {:ok, %{topology: topology, local: local, refs: %{}, nodes: %{}}}
+  end
+
+  def handle_info({:nodeup, _}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info({:nodedown, node}, %{nodes: nodes, refs: refs} = state) do
+    {entries, nodes} = Map.pop(nodes, node, [])
+
     refs =
       Enum.reduce(entries, refs, fn ref, acc ->
-        {incoming(^node, _), acc} = Map.pop(acc, ref)
+        {{^node, _}, acc} = Map.pop(acc, ref)
         Process.demonitor(ref, [:flush])
         acc
       end)
 
-    {:noreply, %{state | refs: refs, outgoing: outgoing, incoming: incoming}}
+    {:noreply, %{state | refs: refs, nodes: nodes}}
   end
 
-  def handle_info({:remote_monitor, name, node, remote_ref},
-                  %{refs: refs, incoming: incoming} = state) do
+  def handle_info({:monitor, name, node, remote_ref},
+                  %{refs: refs, nodes: nodes} = state) do
     ref = Process.monitor(name)
-    refs = Map.put(refs, ref, incoming(node, remote_ref))
-    incoming = Map.update(incoming, node, [ref], &[ref | &1])
-    {:noreply, %{state | refs: refs, incoming: incoming}}
+    refs = Map.put(refs, ref, {node, remote_ref})
+    refs = Map.put(refs, {:remote, remote_ref}, ref)
+    nodes = Map.update(nodes, node, [ref], &[ref | &1])
+    {:noreply, %{state | refs: refs, nodes: nodes}}
   end
 
-  def handle_info({:remote_down, ref, reason}, state) do
-    case pop_in(state.refs[ref]) do
-      {outgoing(pid, name, node), state} ->
-        state = update_in(state.outgoing[node], &(&1 && List.delete(&1, ref)))
-        send(pid, {:DOWN, ref, :process, {name, node}, reason})
-        {:noreply, state}
+  def handle_info({:demonitor, remote_ref}, state) do
+    case pop_in(state.refs[{:remote, remote_ref}]) do
+      {ref, state} when is_reference(ref) ->
+        Process.demonitor(ref, [:flush])
+        {{node, ^remote_ref}, state} = pop_in(state.refs[ref])
+        {:noreply, delete_node_ref(state, node, ref)}
       {nil, state} ->
         {:noreply, state}
     end
   end
 
   def handle_info({:DOWN, ref, _, _, reason},
-                  %{topology: topology, monitor: monitor} = state) do
-    case pop_in(state.refs, ref) do
-      {outgoing(_pid, _name, node), state} ->
-        state = update_in(state.outgoing[node], &(&1 && List.delete(&1, ref)))
-        {:noreply, state}
-      {incoming(node, remote_ref), state} ->
-        state = update_in(state.incoming[node], &(&1 && List.delete(&1, ref)))
-        Topology.send(topology, node, monitor, {:remote_down, remote_ref, reason})
-        {:noreply, state}
-      {nil, state} ->
-        {:noreply, state}
-    end
+                  %{topology: topology, local: local} = state) do
+    {{node, remote_ref}, state} = pop_in(state.refs, ref)
+    {^ref, state} = pop_in(state.refs[{:remote, remote_ref}])
+    Topology.send(topology, node, local, {:down, remote_ref, reason})
+    {:noreply, delete_node_ref(state, node, ref)}
+  end
+
+  defp delete_node_ref(state, node, ref) do
+    update_in(state.nodes[node], &(&1 && List.delete(&1, ref)))
   end
 end
