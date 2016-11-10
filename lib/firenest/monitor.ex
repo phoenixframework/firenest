@@ -28,7 +28,7 @@ defmodule Firenest.Monitor do
 end
 
 defmodule Firenest.Monitor.Local do
-  # The lcaol process that sends requests to the remote one.
+  # The local process that sends requests to the remote one.
   @moduledoc false
 
   use GenServer
@@ -40,13 +40,14 @@ defmodule Firenest.Monitor.Local do
   # Callbacks
 
   def init({topology, remote}) do
-    Process.link(Process.whereis(topology))
+    Process.flag(:trap_exit, true)
     Topology.subscribe(topology, self())
     {:ok, %{topology: topology, remote: remote, refs: %{}, nodes: %{}}}
   end
 
   def handle_call({:monitor, name, node}, {pid, _},
                   %{remote: remote, topology: topology, refs: refs, nodes: nodes} = state) do
+    Process.link(pid)
     ref = Process.monitor(pid)
     message = {:monitor, name, Topology.node(topology), ref}
 
@@ -78,6 +79,10 @@ defmodule Firenest.Monitor.Local do
     {:noreply, %{state | refs: refs, nodes: nodes}}
   end
 
+  def handle_info({:EXIT, _, _}, state) do
+    {:noreply, state}
+  end
+
   def handle_info({:down, ref, reason}, state) do
     case pop_in(state.refs[ref]) do
       {{pid, name, node}, state} ->
@@ -92,7 +97,7 @@ defmodule Firenest.Monitor.Local do
   def handle_info({:DOWN, ref, _, _, _},
                   %{topology: topology, remote: remote} = state) do
     {{_pid, _name, node}, state} = pop_in(state.refs, ref)
-    Topology.send(topology, node, remote, {:demonitor, ref})
+    Topology.send(topology, node, remote, {:demonitor, Topology.node(topology), ref})
     {:noreply, delete_node_ref(state, node, ref)}
   end
 
@@ -145,13 +150,13 @@ defmodule Firenest.Monitor.Remote do
                   %{refs: refs, nodes: nodes} = state) do
     ref = Process.monitor(name)
     refs = Map.put(refs, ref, {node, remote_ref})
-    refs = Map.put(refs, {:remote, remote_ref}, ref)
+    refs = Map.put(refs, {node, remote_ref}, ref)
     nodes = Map.update(nodes, node, [ref], &[ref | &1])
     {:noreply, %{state | refs: refs, nodes: nodes}}
   end
 
-  def handle_info({:demonitor, remote_ref}, state) do
-    case pop_in(state.refs[{:remote, remote_ref}]) do
+  def handle_info({:demonitor, node, remote_ref}, state) do
+    case pop_in(state.refs[{node, remote_ref}]) do
       {ref, state} when is_reference(ref) ->
         Process.demonitor(ref, [:flush])
         {{node, ^remote_ref}, state} = pop_in(state.refs[ref])
@@ -164,7 +169,7 @@ defmodule Firenest.Monitor.Remote do
   def handle_info({:DOWN, ref, _, _, reason},
                   %{topology: topology, local: local} = state) do
     {{node, remote_ref}, state} = pop_in(state.refs, ref)
-    {^ref, state} = pop_in(state.refs[{:remote, remote_ref}])
+    {^ref, state} = pop_in(state.refs[{node, remote_ref}])
     Topology.send(topology, node, local, {:down, remote_ref, reason})
     {:noreply, delete_node_ref(state, node, ref)}
   end
