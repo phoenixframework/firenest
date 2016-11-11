@@ -91,6 +91,11 @@ defmodule Firenest.Topology do
   @callback disconnect(t, node) :: true | false | :ignored
 
   @doc """
+  Monitors the given `name` in `node`.
+  """
+  @callback monitor(t, node, name) :: reference
+
+  @doc """
   Subscribes `pid` to the `topology` `:nodeup` and `:nodedown` events.
   """
   @callback subscribe(t, pid) :: reference
@@ -175,10 +180,12 @@ defmodule Firenest.Topology do
 
   Returns `:ok` or `{:error, reason}`. In particular,
   `{:error, :noconnection}` must be returned if the node
-  name is not known. However, keep in mind `:ok` does
-  not guarantee the message was delivered nor processed
-  by the `name`, since `name` may have disconnected by
-  the time we send (although we don't know it yet).
+  name is not known.
+
+  However, keep in mind `:ok` does not guarantee the message
+  was delivered nor processed by the receiving `name`, since
+  `name` may have disconnected by the time we send (although we
+  don't know it yet).
   """
   @spec send(t, node, name, message :: term) :: :ok | {:error, term}
   def send(topology, node, name, message) when is_atom(topology) and is_atom(node) and is_atom(name) do
@@ -208,6 +215,30 @@ defmodule Firenest.Topology do
   @spec disconnect(t, node) :: true | false | :ignored
   def disconnect(topology, node) do
     adapter!(topology).disconnect(topology, node)
+  end
+
+  @doc """
+  Monitors the given `name` in `node` through `topology`.
+
+  Once the monitored process crashes (or the connection to
+  the node the monitored process runs on is lost), a message
+  with the format described below is delivered to the caller
+  process:
+
+      {:DOWN, ref, :process, {name, node}, reason}
+
+  Where `ref` is the reference returned by `monitor/3` and `reason`
+  is the reason the process exited. 
+
+  This operations always return a `reference`, regardless if
+  there is a connection to `node` or not. In case there is no
+  connection, a DOWN message will be delivered to the caller with
+  reason of `:noconnection`. In case there is no process with `name`
+  in `node`, a DOWN message with reason of `:noproc` is sent.
+  """
+  @spec monitor(t, node, name) :: reference
+  def monitor(topology, node, name) do
+    adapter!(topology).monitor(topology, node, name)
   end
 
   @doc """

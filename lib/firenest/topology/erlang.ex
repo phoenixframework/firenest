@@ -99,15 +99,25 @@ defmodule Firenest.Topology.Erlang do
   end
 
   def broadcast(topology, name, message) when is_atom(name) do
-    topology |> nodes() |> Enum.each(&send({name, &1}, message))
+    topology |> nodes() |> Enum.each(&Process.send({name, &1}, message, [:noconnect]))
   end
 
   def send(topology, node, name, message) when is_atom(node) and is_atom(name) do
     if node == Kernel.node() or node in nodes(topology) do
-      send({name, node}, message)
+      Process.send({name, node}, message, [:noconnect])
       :ok
     else
       {:error, :noconnection}
+    end
+  end
+
+  def monitor(topology, node, name) do
+    if node == Kernel.node() or node in nodes(topology) do
+      Process.monitor({name, node})
+    else
+      ref = make_ref()
+      send(self(), {:DOWN, ref, :process, {name, node}, :noconnection})
+      ref
     end
   end
 
