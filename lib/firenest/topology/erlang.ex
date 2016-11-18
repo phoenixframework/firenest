@@ -235,6 +235,6 @@ defmodule Firenest.Topology.Erlang do
   end
 
   defp update_topology(topology, nodes) do
-    true = :ets.insert(topology, {:nodes, Map.keys(nodes)})
+    true = :ets.insert(topology, {:nodes, nodes |> Map.keys |> Enum.sort})
   end
 end

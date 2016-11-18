@@ -4,11 +4,17 @@ defmodule Firenest.Monitor do
   @moduledoc """
   A monitoring service on top of a topology.
 
-  This is typically started by the topologies themselves.
+  This is typically started by the topology to provide the
+  `Firenest.Topology.monitor/3` functionality.
   """
 
   import Supervisor.Spec
 
+  @doc """
+  Starts the monitoring service on `topology` with name `monitor`.
+
+  It must be started as a supervisor under the same tree as the topology.
+  """
   def start_link(topology, monitor) do
     local = monitor
     remote = Module.concat(monitor, "Remote")
@@ -22,6 +28,9 @@ defmodule Firenest.Monitor do
     Supervisor.start_link(children, name: supervisor, strategy: :one_for_all)
   end
 
+  @doc """
+  Invokes the monitoring service to monitor the given `name` in `node`.
+  """
   def monitor(monitor, node, name) when is_atom(node) and is_atom(name) do
     GenServer.call(monitor, {:monitor, name, node})
   end

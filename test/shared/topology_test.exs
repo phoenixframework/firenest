@@ -116,4 +116,74 @@ defmodule Firenest.TopologyTest do
       T.disconnect(topology, @node)
     end
   end
+
+  describe "monitor" do
+    @describetag :monitor
+
+    test "supports local names", %{topology: topology} do
+      {:ok, pid} = Agent.start(fn -> %{} end, name: :local_agent)
+      ref = T.monitor(topology, :"first@127.0.0.1", :local_agent)
+      refute_received {:DOWN, ^ref, _, _, _}
+      Process.exit(pid, {:shutdown, :custom_reason})
+      assert_receive {:DOWN, ^ref, :process, {:local_agent, :"first@127.0.0.1"}, {:shutdown, :custom_reason}}
+    end
+
+    test "returns noproc for unknown local names", %{topology: topology} do
+      ref = T.monitor(topology, :"first@127.0.0.1", :local_agent)
+      assert_receive {:DOWN, ^ref, :process, {:local_agent, :"first@127.0.0.1"}, :noproc}
+    end
+
+    test "returns no connection for unknown nodes", %{topology: topology} do
+      ref = T.monitor(topology, :"unknown@127.0.0.1", :local_agent)
+      assert_receive {:DOWN, ^ref, :process, {:local_agent, :"unknown@127.0.0.1"}, :noconnection}
+    end
+
+    test "supports remote names", config do
+      %{topology: topology, evaluator: evaluator, test: test} = config
+
+      T.send(topology, :"second@127.0.0.1", evaluator, {:eval_quoted, quote do
+        {:ok, _} = Agent.start(fn -> %{} end, name: :remote_agent)
+        T.send(unquote(topology), :"first@127.0.0.1", unquote(test), :done)
+      end})
+
+      assert_receive :done
+      ref = T.monitor(topology, :"second@127.0.0.1", :remote_agent)
+      refute_received {:DOWN, ^ref, _, _, _}
+
+      T.send(topology, :"second@127.0.0.1", evaluator, {:eval_quoted, quote do
+        Process.exit(Process.whereis(:remote_agent), {:shutdown, :custom_reason})
+      end})
+
+      assert_receive {:DOWN, ^ref, :process, {:remote_agent, :"second@127.0.0.1"}, reason} when
+                     reason == :noproc or reason == {:shutdown, :custom_reason}
+    end
+
+    test "returns noproc for unknown remote names", %{topology: topology} do
+      ref = T.monitor(topology, :"second@127.0.0.1", :remote_agent)
+      assert_receive {:DOWN, ^ref, :process, {:remote_agent, :"second@127.0.0.1"}, :noproc}
+    end
+
+    @node :"monitor@127.0.0.1"
+    test "returns noconnection on remote disconnection", config do
+      %{topology: topology, evaluator: evaluator, test: test} = config
+      T.subscribe(topology, self())
+      Firenest.Test.spawn_nodes([@node])
+      Firenest.Test.start_firenest([@node], adapter: Firenest.Topology.Erlang)
+      assert_receive {:nodeup, @node}
+
+      T.send(topology, @node, evaluator, {:eval_quoted, quote do
+        {:ok, _} = Agent.start(fn -> %{} end, name: :remote_agent)
+        T.send(unquote(topology), :"first@127.0.0.1", unquote(test), :done)
+      end})
+
+      assert_receive :done
+      ref = T.monitor(topology, @node, :remote_agent)
+
+      assert T.disconnect(topology, @node)
+      assert_receive {:nodedown, @node}
+      assert_receive {:DOWN, ^ref, :process, {:remote_agent, @node}, :noconnection}
+    after
+      T.disconnect(config.topology, @node)
+    end
+  end
 end
