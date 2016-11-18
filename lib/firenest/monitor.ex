@@ -105,7 +105,7 @@ defmodule Firenest.Monitor.Local do
 
   def handle_info({:DOWN, ref, _, _, _},
                   %{topology: topology, remote: remote} = state) do
-    {{_pid, _name, node}, state} = pop_in(state.refs, ref)
+    {{_pid, _name, node}, state} = pop_in(state.refs[ref])
     Topology.send(topology, node, remote, {:demonitor, Topology.node(topology), ref})
     {:noreply, delete_node_ref(state, node, ref)}
   end
@@ -177,7 +177,7 @@ defmodule Firenest.Monitor.Remote do
 
   def handle_info({:DOWN, ref, _, _, reason},
                   %{topology: topology, local: local} = state) do
-    {{node, remote_ref}, state} = pop_in(state.refs, ref)
+    {{node, remote_ref}, state} = pop_in(state.refs[ref])
     {^ref, state} = pop_in(state.refs[{node, remote_ref}])
     Topology.send(topology, node, local, {:down, remote_ref, reason})
     {:noreply, delete_node_ref(state, node, ref)}

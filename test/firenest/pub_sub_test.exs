@@ -7,7 +7,7 @@ defmodule Firenest.PubSubTest do
   setup_all do
     nodes = [:"first@127.0.0.1", :"second@127.0.0.1"]
     pubsub = Firenest.Test.PubSub
-    Firenest.Test.start_link(nodes, Firenest.PubSub, [pubsub, [topology: Firenest.Test]])
+    Firenest.Test.start_link(nodes, P, [pubsub, [topology: Firenest.Test]])
     {:ok, topology: Firenest.Test, evaluator: Firenest.Test.Evaluator, pubsub: pubsub}
   end
 
