@@ -142,19 +142,19 @@ defmodule Firenest.TopologyTest do
       %{topology: topology, evaluator: evaluator, test: test} = config
 
       T.send(topology, :"second@127.0.0.1", evaluator, {:eval_quoted, quote do
-        {:ok, _} = Agent.start(fn -> %{} end, name: :topology_agent)
+        {:ok, _} = Agent.start(fn -> %{} end, name: :topology_agent1)
         T.send(unquote(topology), :"first@127.0.0.1", unquote(test), :done)
       end})
 
       assert_receive :done
-      ref = T.monitor(topology, :"second@127.0.0.1", :topology_agent)
+      ref = T.monitor(topology, :"second@127.0.0.1", :topology_agent1)
       refute_received {:DOWN, ^ref, _, _, _}
 
       T.send(topology, :"second@127.0.0.1", evaluator, {:eval_quoted, quote do
-        Process.exit(Process.whereis(:topology_agent), {:shutdown, :custom_reason})
+        Process.exit(Process.whereis(:topology_agent1), {:shutdown, :custom_reason})
       end})
 
-      assert_receive {:DOWN, ^ref, :process, {:topology_agent, :"second@127.0.0.1"}, reason} when
+      assert_receive {:DOWN, ^ref, :process, {:topology_agent1, :"second@127.0.0.1"}, reason} when
                      reason == :noproc or reason == {:shutdown, :custom_reason}
     end
 
@@ -172,16 +172,16 @@ defmodule Firenest.TopologyTest do
       assert_receive {:nodeup, @node}
 
       T.send(topology, @node, evaluator, {:eval_quoted, quote do
-        {:ok, _} = Agent.start(fn -> %{} end, name: :topology_agent)
+        {:ok, _} = Agent.start(fn -> %{} end, name: :topology_agent2)
         T.send(unquote(topology), :"first@127.0.0.1", unquote(test), :done)
       end})
 
       assert_receive :done
-      ref = T.monitor(topology, @node, :topology_agent)
+      ref = T.monitor(topology, @node, :topology_agent2)
 
       assert T.disconnect(topology, @node)
       assert_receive {:nodedown, @node}
-      assert_receive {:DOWN, ^ref, :process, {:topology_agent, @node}, :noconnection}
+      assert_receive {:DOWN, ^ref, :process, {:topology_agent2, @node}, :noconnection}
     after
       T.disconnect(config.topology, @node)
     end

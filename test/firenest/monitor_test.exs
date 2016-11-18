@@ -39,19 +39,19 @@ defmodule Firenest.MonitorTest do
     %{topology: topology, evaluator: evaluator, monitor: monitor, test: test} = config
 
     T.send(topology, :"second@127.0.0.1", evaluator, {:eval_quoted, quote do
-      {:ok, _} = Agent.start(fn -> %{} end, name: :monitor_agent)
+      {:ok, _} = Agent.start(fn -> %{} end, name: :monitor_agent1)
       T.send(unquote(topology), :"first@127.0.0.1", unquote(test), :done)
     end})
 
     assert_receive :done
-    ref = M.monitor(monitor, :"second@127.0.0.1", :monitor_agent)
+    ref = M.monitor(monitor, :"second@127.0.0.1", :monitor_agent1)
     refute_received {:DOWN, ^ref, _, _, _}
 
     T.send(topology, :"second@127.0.0.1", evaluator, {:eval_quoted, quote do
-      Process.exit(Process.whereis(:monitor_agent), {:shutdown, :custom_reason})
+      Process.exit(Process.whereis(:monitor_agent1), {:shutdown, :custom_reason})
     end})
 
-    assert_receive {:DOWN, ^ref, :process, {:monitor_agent, :"second@127.0.0.1"}, reason} when
+    assert_receive {:DOWN, ^ref, :process, {:monitor_agent1, :"second@127.0.0.1"}, reason} when
                    reason == :noproc or reason == {:shutdown, :custom_reason}
   end
 
@@ -69,16 +69,16 @@ defmodule Firenest.MonitorTest do
     assert_receive {:nodeup, @node}
 
     T.send(topology, @node, evaluator, {:eval_quoted, quote do
-      {:ok, _} = Agent.start(fn -> %{} end, name: :monitor_agent)
+      {:ok, _} = Agent.start(fn -> %{} end, name: :monitor_agent2)
       T.send(unquote(topology), :"first@127.0.0.1", unquote(test), :done)
     end})
 
     assert_receive :done
-    ref = M.monitor(monitor, @node, :monitor_agent)
+    ref = M.monitor(monitor, @node, :monitor_agent2)
 
     assert T.disconnect(topology, @node)
     assert_receive {:nodedown, @node}
-    assert_receive {:DOWN, ^ref, :process, {:monitor_agent, @node}, :noconnection}
+    assert_receive {:DOWN, ^ref, :process, {:monitor_agent2, @node}, :noconnection}
   after
     T.disconnect(config.topology, @node)
   end
@@ -87,13 +87,13 @@ defmodule Firenest.MonitorTest do
     %{topology: topology, evaluator: evaluator, monitor: monitor, test: test} = config
 
     T.send(topology, :"second@127.0.0.1", evaluator, {:eval_quoted, quote do
-      {:ok, _} = Agent.start(fn -> %{} end, name: :monitor_agent)
+      {:ok, _} = Agent.start(fn -> %{} end, name: :monitor_agent3)
       T.send(unquote(topology), :"first@127.0.0.1", unquote(test), :done)
     end})
 
     assert_receive :done
     {:ok, pid} = Task.start_link(fn ->
-      M.monitor(monitor, :"second@127.0.0.1", :monitor_agent)
+      M.monitor(monitor, :"second@127.0.0.1", :monitor_agent3)
     end)
     ref = Process.monitor(pid)
     assert_receive {:DOWN, ^ref, _, _, :normal}
