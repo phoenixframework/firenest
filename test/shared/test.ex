@@ -24,6 +24,7 @@ defmodule Firenest.Test do
       Code.eval_quoted(quoted)
       {:noreply, state}
     end
+
     def handle_info(_, state) do
       {:noreply, state}
     end
@@ -40,9 +41,10 @@ defmodule Firenest.Test do
         {:ok, ipv4} = :inet.parse_ipv4_address('127.0.0.1')
         :erl_boot_server.add_slave(ipv4)
         :ok
+
       {:error, _} ->
         raise "make sure epmd is running before starting the test suite. " <>
-              "Running `elixir --sname foo` or `epmd -daemon` once is usually enough."
+                "Running `elixir --sname foo` or `epmd -daemon` once is usually enough."
     end
   end
 
@@ -68,9 +70,10 @@ defmodule Firenest.Test do
   """
   def start_link(nodes, module, args) do
     case :rpc.multicall(nodes, __MODULE__, :start_link, [module, args]) do
-      {_, []}  -> :ok
-      {_, bad} -> raise "starting #{inspect module} in cluster failed on nodes #{inspect bad}"
+      {_, []} -> :ok
+      {_, bad} -> raise "starting #{inspect(module)} in cluster failed on nodes #{inspect(bad)}"
     end
+
     :ok
   end
 
@@ -78,11 +81,12 @@ defmodule Firenest.Test do
   def start_link(module, args) do
     parent = self()
 
-    {:ok, task} = Task.start_link(fn ->
-      apply(module, :start_link, args)
-      send(parent, self())
-      Process.sleep(:infinity)
-    end)
+    {:ok, task} =
+      Task.start_link(fn ->
+        apply(module, :start_link, args)
+        send(parent, self())
+        Process.sleep(:infinity)
+      end)
 
     receive do
       ^task -> :ok
@@ -110,7 +114,7 @@ defmodule Firenest.Test do
   end
 
   defp transfer_configuration(node) do
-    for {app_name, _, _} <- Application.loaded_applications do
+    for {app_name, _, _} <- Application.loaded_applications() do
       for {key, val} <- Application.get_all_env(app_name) do
         rpc(node, Application, :put_env, [app_name, key, val])
       end
@@ -120,7 +124,8 @@ defmodule Firenest.Test do
   defp ensure_applications_started(node) do
     rpc(node, Application, :ensure_all_started, [:mix])
     rpc(node, Mix, :env, [Mix.env()])
-    for {app_name, _, _} <- Application.loaded_applications do
+
+    for {app_name, _, _} <- Application.loaded_applications() do
       rpc(node, Application, :ensure_all_started, [app_name])
     end
   end
@@ -130,6 +135,6 @@ defmodule Firenest.Test do
     |> to_string
     |> String.split("@")
     |> Enum.at(0)
-    |> String.to_atom
+    |> String.to_atom()
   end
 end

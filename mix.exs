@@ -2,13 +2,15 @@ defmodule Firenest.Mixfile do
   use Mix.Project
 
   def project do
-    [app: :firenest,
-     version: "0.1.0",
-     elixir: "~> 1.4-dev",
-     build_embedded: Mix.env == :prod,
-     start_permanent: Mix.env == :prod,
-     elixirc_paths: elixirc_paths(Mix.env),
-     deps: deps()]
+    [
+      app: :firenest,
+      version: "0.1.0",
+      elixir: "~> 1.4-dev",
+      build_embedded: Mix.env() == :prod,
+      start_permanent: Mix.env() == :prod,
+      elixirc_paths: elixirc_paths(Mix.env()),
+      deps: deps()
+    ]
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/shared"]

@@ -175,7 +175,7 @@ defmodule Firenest.Topology do
     adapter!(topology).broadcast(topology, name, message)
   end
 
-   @doc """
+  @doc """
   Sends `message` to processes named `name` in `node`.
 
   Returns `:ok` or `{:error, reason}`. In particular,
@@ -188,7 +188,8 @@ defmodule Firenest.Topology do
   don't know it yet).
   """
   @spec send(t, node, name, message :: term) :: :ok | {:error, term}
-  def send(topology, node, name, message) when is_atom(topology) and is_atom(node) and is_atom(name) do
+  def send(topology, node, name, message)
+      when is_atom(topology) and is_atom(node) and is_atom(name) do
     adapter!(topology).send(topology, node, name, message)
   end
 
@@ -267,7 +268,7 @@ defmodule Firenest.Topology do
     try do
       :ets.lookup_element(name, :adapter, 2)
     catch
-      :error, :badarg -> raise "could not find topology named #{inspect name}"
+      :error, :badarg -> raise "could not find topology named #{inspect(name)}"
     end
   end
 end
