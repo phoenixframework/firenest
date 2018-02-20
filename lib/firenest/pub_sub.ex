@@ -46,12 +46,13 @@ defmodule Firenest.PubSub do
     use GenServer
 
     def dispatch(entries, from, message) do
-      Enum.each entries, fn
+      Enum.each(entries, fn
         {pid, _} when pid == from ->
           :ok
+
         {pid, _} ->
           send(pid, message)
-      end
+      end)
     end
 
     def start_link(name, pubsub, module, function) do
@@ -64,9 +65,11 @@ defmodule Firenest.PubSub do
 
     def handle_info({:broadcast, topics, message}, state) do
       {pubsub, module, function} = state
+
       for topic <- topics do
         Registry.dispatch(pubsub, topic, {module, function, [:none, message]})
       end
+
       {:noreply, state}
     end
   end
@@ -91,14 +94,18 @@ defmodule Firenest.PubSub do
       receives the subscriptions entries, the broadcaster identifier and the
       message to broadcast
   """
-  @spec start_link(t, options) :: {:ok, pid} | {:error, term} when
-        options: [topology: Firenest.Topology.t,
-                  partitions: pos_integer(),
-                  dispatcher: {module, function}]
-  def start_link(pubsub, options) when is_atom(pubsub)  do
+  @spec start_link(t, options) :: {:ok, pid} | {:error, term}
+        when options: [
+               topology: Firenest.Topology.t(),
+               partitions: pos_integer(),
+               dispatcher: {module, function}
+             ]
+  def start_link(pubsub, options) when is_atom(pubsub) do
     topology = options[:topology]
-    partitions = options[:partitions] ||
-                 (System.schedulers_online |> Kernel./(4) |> Float.ceil() |> trunc())
+
+    partitions =
+      options[:partitions] || System.schedulers_online() |> Kernel./(4) |> Float.ceil() |> trunc()
+
     {module, function} = options[:dispatcher] || {Dispatcher, :dispatch}
 
     unless topology do
@@ -107,8 +114,7 @@ defmodule Firenest.PubSub do
 
     supervisor = Module.concat(pubsub, "Supervisor")
     dispatcher = Module.concat(pubsub, "Dispatcher")
-    registry = [meta: [pubsub: {topology, dispatcher, module, function}],
-                partitions: partitions]
+    registry = [meta: [pubsub: {topology, dispatcher, module, function}], partitions: partitions]
 
     import Supervisor.Spec
 
@@ -173,6 +179,7 @@ defmodule Firenest.PubSub do
   def broadcast(pubsub, topic, message) when is_atom(pubsub) do
     topics = List.wrap(topic)
     {:ok, {topology, dispatcher, module, function}} = Registry.meta(pubsub, :pubsub)
+
     with :ok <- Firenest.Topology.broadcast(topology, dispatcher, {:broadcast, topics, message}) do
       dispatch(pubsub, :none, topics, message, module, function)
     end
@@ -188,7 +195,7 @@ defmodule Firenest.PubSub do
   def broadcast!(pubsub, topic, message) do
     case broadcast(pubsub, topic, message) do
       :ok -> :ok
-      {:error, error} -> raise BroadcastError, "broadcast!/3 failed with #{inspect error}"
+      {:error, error} -> raise BroadcastError, "broadcast!/3 failed with #{inspect(error)}"
     end
   end
 
@@ -206,6 +213,7 @@ defmodule Firenest.PubSub do
   def broadcast_from(pubsub, pid, topic, message) when is_atom(pubsub) and is_pid(pid) do
     topics = List.wrap(topic)
     {:ok, {topology, dispatcher, module, function}} = Registry.meta(pubsub, :pubsub)
+
     with :ok <- Firenest.Topology.broadcast(topology, dispatcher, {:broadcast, topics, message}) do
       dispatch(pubsub, pid, topics, message, module, function)
     end
@@ -225,7 +233,7 @@ defmodule Firenest.PubSub do
   def broadcast_from!(pubsub, pid, topic, message) do
     case broadcast_from(pubsub, pid, topic, message) do
       :ok -> :ok
-      {:error, error} -> raise BroadcastError, "broadcast_from!/4 failed with #{inspect error}"
+      {:error, error} -> raise BroadcastError, "broadcast_from!/4 failed with #{inspect(error)}"
     end
   end
 
@@ -257,10 +265,12 @@ defmodule Firenest.PubSub do
 
   defp dispatch(pubsub, from, topics, message, module, function) do
     mfa = {module, function, [from, message]}
-    Enum.each topics, fn
+
+    Enum.each(topics, fn
       topic when is_binary(topic) -> Registry.dispatch(pubsub, topic, mfa)
-      topic -> raise ArgumentError, "topic must be a string, got: #{inspect topic}"
-    end
+      topic -> raise ArgumentError, "topic must be a string, got: #{inspect(topic)}"
+    end)
+
     :ok
   end
 end
