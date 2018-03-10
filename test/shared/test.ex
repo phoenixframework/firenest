@@ -59,7 +59,7 @@ defmodule Firenest.Test do
   Starts firenest on the given nodes.
   """
   def start_firenest(nodes, options) do
-    start_link(nodes, Firenest.Topology, [[{:name, Firenest.Test} | options]])
+    start_link(nodes, Firenest.Topology, [[name: Firenest.Test] ++ options])
     start_link(nodes, Evaluator, [])
   end
 
