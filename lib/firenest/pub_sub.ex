@@ -12,8 +12,8 @@ defmodule Firenest.PubSub do
   alongside the desired topology:
 
       children = [
-        supervisor(Firenest.Topology, [MyApp.Topology, adapter: Firenest.Topology.Erlang]),
-        supervisor(Firenest.PubSub, [MyApp.PubSub, topology: MyApp.Topology])
+        {Firenest.Topology, [MyApp.Topology, adapter: Firenest.Topology.Erlang]},
+        {Firenest.PubSub, [MyApp.PubSub, topology: MyApp.Topology]}
       ]
 
   Once the topology and pubsub processes are started, processes
@@ -54,7 +54,7 @@ defmodule Firenest.PubSub do
       end
     end
 
-    def start_link(name, pubsub, module, function) do
+    def start_link([name, pubsub, module, function]) do
       GenServer.start_link(__MODULE__, {pubsub, module, function}, name: name)
     end
 
@@ -108,13 +108,13 @@ defmodule Firenest.PubSub do
     supervisor = Module.concat(pubsub, "Supervisor")
     dispatcher = Module.concat(pubsub, "Dispatcher")
     registry = [meta: [pubsub: {topology, dispatcher, module, function}],
-                partitions: partitions]
-
-    import Supervisor.Spec
+                partitions: partitions,
+                keys: :duplicate,
+                name: pubsub]
 
     children = [
-      supervisor(Registry, [:duplicate, pubsub, registry]),
-      worker(Dispatcher, [dispatcher, pubsub, module, function])
+      {Registry, registry},
+      {Dispatcher, [dispatcher, pubsub, module, function]}
     ]
 
     Supervisor.start_link(children, strategy: :rest_for_one, name: supervisor)

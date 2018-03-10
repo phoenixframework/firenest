@@ -42,10 +42,13 @@ defmodule Firenest.Topology.Erlang do
       true = :ets.insert(topology, [adapter: Firenest.Topology.Erlang])
 
       children = [
-        worker(GenServer, [Firenest.Topology.Erlang, topology, [name: topology]])
+        %{
+          id: topology,
+          start: {GenServer, :start_link, [Firenest.Topology.Erlang, topology, [name: topology]]}
+        }
       ]
 
-      supervise(children, strategy: :one_for_one)
+      Supervisor.init(children, strategy: :one_for_one)
     end
   end
 
