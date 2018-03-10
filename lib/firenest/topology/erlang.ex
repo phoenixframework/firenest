@@ -32,7 +32,8 @@ defmodule Firenest.Topology.Erlang do
 
     use Elixir.Supervisor
 
-    def start_link(topology, opts) do
+    def start_link(opts) do
+      topology = opts[:name]
       name = Module.concat(topology, "Supervisor")
       Elixir.Supervisor.start_link(__MODULE__, {topology, opts}, name: name)
     end
@@ -42,10 +43,13 @@ defmodule Firenest.Topology.Erlang do
       true = :ets.insert(topology, [adapter: Firenest.Topology.Erlang])
 
       children = [
-        worker(GenServer, [Firenest.Topology.Erlang, topology, [name: topology]])
+        %{
+          id: topology,
+          start: {GenServer, :start_link, [Firenest.Topology.Erlang, topology, [name: topology]]}
+        }
       ]
 
-      supervise(children, strategy: :one_for_one)
+      Supervisor.init(children, strategy: :one_for_one)
     end
   end
 
@@ -54,7 +58,7 @@ defmodule Firenest.Topology.Erlang do
   @behaviour Firenest.Topology
   @timeout 5000
 
-  defdelegate start_link(topology, opts), to: Supervisor
+  defdelegate start_link(opts), to: Supervisor
 
   def subscribe(topology, pid) when is_pid(pid) do
     GenServer.call(topology, {:subscribe, pid})

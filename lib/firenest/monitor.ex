@@ -8,8 +8,6 @@ defmodule Firenest.Monitor do
   `Firenest.Topology.monitor/3` functionality.
   """
 
-  import Supervisor.Spec
-
   @doc """
   Starts the monitoring service on `topology` with name `monitor`.
 
@@ -21,8 +19,8 @@ defmodule Firenest.Monitor do
     supervisor = Module.concat(monitor, "Supervisor")
 
     children = [
-      worker(Firenest.Monitor.Local, [topology, local, remote]),
-      worker(Firenest.Monitor.Remote, [topology, local, remote]),
+      {Firenest.Monitor.Local, [topology, local, remote]},
+      {Firenest.Monitor.Remote, [topology, local, remote]},
     ]
 
     Supervisor.start_link(children, name: supervisor, strategy: :one_for_all)
@@ -42,7 +40,7 @@ defmodule Firenest.Monitor.Local do
 
   use GenServer
 
-  def start_link(topology, local, remote) do
+  def start_link([topology, local, remote]) do
     GenServer.start_link(__MODULE__, {topology, remote}, name: local)
   end
 
@@ -126,7 +124,7 @@ defmodule Firenest.Monitor.Remote do
 
   use GenServer
 
-  def start_link(topology, local, remote) do
+  def start_link([topology, local, remote]) do
     GenServer.start_link(__MODULE__, {topology, local}, name: remote)
   end
 
