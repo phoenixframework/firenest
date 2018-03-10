@@ -54,7 +54,7 @@ defmodule Firenest.PubSub do
       end
     end
 
-    def start_link([name, pubsub, module, function]) do
+    def start_link({name, pubsub, module, function}) do
       GenServer.start_link(__MODULE__, {pubsub, module, function}, name: name)
     end
 
@@ -119,7 +119,7 @@ defmodule Firenest.PubSub do
 
     children = [
       {Registry, registry},
-      {Dispatcher, [dispatcher, pubsub, module, function]}
+      {Dispatcher, {dispatcher, pubsub, module, function}}
     ]
 
     Supervisor.start_link(children, strategy: :rest_for_one, name: supervisor)
