@@ -4,17 +4,12 @@ elixir:
   - 1.6
 otp_release:
   - 18.0
-  - 18.3
   - 19.0
-  - 19.1
   - 20.0
-  - 20.2
 matrix:
   exclude:
     - elixir: 1.6
       otp_release: 18.0
-    - elixir: 1.6
-      otp_release: 18.3
 sudo: false
 before_script:
   - epmd -daemon
