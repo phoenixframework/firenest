@@ -14,7 +14,7 @@ defmodule Firenest.Topology do
   processes currently are identified by the local atom name.
 
   An instance of `Firenest.Topology` must be started per node,
-  via the `start_link/2` function, alongside the proper adapter.
+  via the `start_link/1` function, alongside the proper adapter.
   All topologies are also locally named.
 
   Firenest ships with a default topology called `Firenest.Topology.Erlang`
@@ -58,7 +58,7 @@ defmodule Firenest.Topology do
   under it, pointing to a module that implements the topology
   callbacks.
   """
-  @callback start_link(t, keyword()) :: {:ok, pid} | {:error, term}
+  @callback start_link(keyword()) :: {:ok, pid} | {:error, term}
 
   @doc """
   Returns the name of the current node in `topology`.
@@ -106,10 +106,10 @@ defmodule Firenest.Topology do
   @callback unsubscribe(t, reference) :: :ok
 
   @doc """
-  Starts a topology with name `topology` and the given `options`.
+  Starts a topology with the given `options`.
 
-  The `:adapter` key is required as part of `options`. All other
-  keys have their semantics dictated by the adapter.
+  The `:adapter` and `:name` keys are required as part of `options`.
+  All other keys have their semantics dictated by the adapter.
 
   It returns `{:ok, pid}` where `pid` represents a supervisor or
   `{:error, term}`.
@@ -118,22 +118,24 @@ defmodule Firenest.Topology do
 
   Most times the topology is started as part of your supervision tree:
 
-      supervisor(Firenest.Topology, [MyApp.Topology, [adapter: Firenest.Topology.Erlang]])
+      supervisor(Firenest.Topology, [topology: MyApp.Topology, adapter: Firenest.Topology.Erlang])
 
   which is equivalent to calling:
 
-      Firenest.Topology.start_link(MyApp.Topology, adapter: Firenest.Topology.Erlang)
+      Firenest.Topology.start_link(topology: MyApp.Topology, adapter: Firenest.Topology.Erlang)
 
   """
-  @spec start_link(t, keyword()) :: {:ok, pid} | {:error, term}
-  def start_link(topology, options) when is_atom(topology) do
+  @spec start_link(keyword()) :: {:ok, pid} | {:error, term}
+  def start_link(options) do
+    name = options[:name]
     {adapter, options} = Keyword.pop(options, :adapter)
 
-    unless adapter do
-      raise ArgumentError, "Firenest.Topology.start_link/2 expects :adapter as option"
+    unless adapter && name do
+      raise ArgumentError,
+        "Firenest.Topology.start_link/1 expects :adapter and :name as options"
     end
 
-    adapter.start_link(topology, options)
+    adapter.start_link(options)
   end
 
   @doc """
@@ -228,7 +230,7 @@ defmodule Firenest.Topology do
       {:DOWN, ref, :process, {name, node}, reason}
 
   Where `ref` is the reference returned by `monitor/3` and `reason`
-  is the reason the process exited. 
+  is the reason the process exited.
 
   This operations always return a `reference`, regardless if
   there is a connection to `node` or not. In case there is no

@@ -12,8 +12,8 @@ defmodule Firenest.PubSub do
   alongside the desired topology:
 
       children = [
-        {Firenest.Topology, [MyApp.Topology, adapter: Firenest.Topology.Erlang]},
-        {Firenest.PubSub, [MyApp.PubSub, topology: MyApp.Topology]}
+        {Firenest.Topology, name: MyApp.Topology, adapter: Firenest.Topology.Erlang},
+        {Firenest.PubSub, name: MyApp.PubSub, topology: MyApp.Topology}
       ]
 
   Once the topology and pubsub processes are started, processes
@@ -72,14 +72,16 @@ defmodule Firenest.PubSub do
   end
 
   @doc """
-  Starts a pubsub with name `pubsub` and the given `options`.
+  Starts a pubsub with the given `options`.
 
-  The `:topology` key is required as part of `options` and
+  The `:name` and `:topology` keys are required as part of `options`.
+  `:name` refers to the name of the pubsub to be started and `:topology`
   must point to a topology started by `Firenest.Topology`.
   The remaining options are described below.
 
   ## Options
 
+    * `:name` - the name of the pubsub to be started
     * `:topology` - the name of a `Firenest.Topology` that powers
       the distribution mechanism
     * `:partitions` - the number of partitions under the pubsub system.
@@ -91,18 +93,21 @@ defmodule Firenest.PubSub do
       receives the subscriptions entries, the broadcaster identifier and the
       message to broadcast
   """
-  @spec start_link(t, options) :: {:ok, pid} | {:error, term} when
-        options: [topology: Firenest.Topology.t,
+  @spec start_link(options) :: {:ok, pid} | {:error, term} when
+        options: [name: t,
+                  topology: Firenest.Topology.t,
                   partitions: pos_integer(),
                   dispatcher: {module, function}]
-  def start_link(pubsub, options) when is_atom(pubsub)  do
+  def start_link(options) do
+    pubsub = options[:name]
     topology = options[:topology]
     partitions = options[:partitions] ||
                  (System.schedulers_online |> Kernel./(4) |> Float.ceil() |> trunc())
     {module, function} = options[:dispatcher] || {Dispatcher, :dispatch}
 
-    unless topology do
-      raise ArgumentError, "Firenest.Topology.start_link/2 expects :topology as option"
+    unless pubsub && topology do
+      raise ArgumentError,
+        "Firenest.Topology.start_link/1 expects :name and :topology as options"
     end
 
     supervisor = Module.concat(pubsub, "Supervisor")
@@ -137,7 +142,7 @@ defmodule Firenest.PubSub do
   ## The dispatching value
 
   An optional `value` may be given which may be used by custom
-  dispatchers (see `start_link/2`). For instance, Phoenix Channels
+  dispatchers (see `start_link/1`). For instance, Phoenix Channels
   use a custom `value` to provide "fastlaning", allowing messages
   broadcast to thousands or even millions of users to be encoded
   once and written directly to sockets instead of being encoded per
