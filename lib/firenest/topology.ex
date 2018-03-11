@@ -189,7 +189,9 @@ defmodule Firenest.Topology do
   been synced yet, `{:error, {:already_synced, pid}}` otherwise.
   `nodes` is a list of tuples with the first element with the node
   name as an atom and the second element is a term used to version
-  that node name.
+  that node name. Only the nodes that are known to have a service
+  with the same `name` running and that have already called `sync_named/2`
+  will be included in the list.
 
   Once this function is called, the given process `pid` will receive
   two messages with the following guarantees:

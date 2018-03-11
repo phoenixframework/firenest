@@ -30,7 +30,7 @@ defmodule Firenest.Topology.Erlang do
   @behaviour Firenest.Topology
   @timeout 5000
 
-  defdelegate child_spec(opts), to: Firenest.Topology.Erlang.Supervisor
+  defdelegate child_spec(opts), to: Firenest.Topology.Erlang.Server
 
   def connect(topology, node) when is_atom(node) do
     fn ->
@@ -80,7 +80,7 @@ defmodule Firenest.Topology.Erlang do
   end
 
   def sync_named(topology, pid, timeout \\ @timeout) when is_pid(pid) do
-    case Process.info(pid) do
+    case Process.info(pid, :registered_name) do
       {:registered_name, []} ->
         raise ArgumentError,
               "cannot sync process #{inspect(pid)} because it hasn't been registered"
@@ -106,35 +106,21 @@ defmodule Firenest.Topology.Erlang do
   end
 end
 
-defmodule Firenest.Topology.Erlang.Supervisor do
-  @moduledoc false
-
-  use Supervisor
-
-  def start_link(opts) do
-    topology = Keyword.fetch!(opts, :name)
-    name = Module.concat(topology, "Supervisor")
-    Supervisor.start_link(__MODULE__, topology, name: name)
-  end
-
-  def init(topology) do
-    ^topology = :ets.new(topology, [:set, :public, :named_table, read_concurrency: true])
-    true = :ets.insert(topology, {:adapter, Firenest.Topology.Erlang})
-    children = [{Firenest.Topology.Erlang.Server, topology}]
-    Supervisor.init(children, strategy: :one_for_one)
-  end
-end
-
 defmodule Firenest.Topology.Erlang.Server do
   @moduledoc false
 
   use GenServer
 
-  def start_link(topology) do
+  def start_link(opts) do
+    topology = Keyword.fetch!(opts, :name)
     GenServer.start_link(__MODULE__, topology, name: topology)
   end
 
   def init(topology) do
+    # Setup the topology ets table contract.
+    ^topology = :ets.new(topology, [:set, :public, :named_table, read_concurrency: true])
+    true = :ets.insert(topology, {:adapter, Firenest.Topology.Erlang})
+
     # We need to monitor nodes before we do the first broadcast.
     # Otherwise a node can come up between the first broadcast and
     # the first notification.
