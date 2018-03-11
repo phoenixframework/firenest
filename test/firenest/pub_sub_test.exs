@@ -193,7 +193,7 @@ defmodule Firenest.PubSubTest do
     end
 
     test "supports custom dispatching", %{topology: topology, topic: topic} do
-      start_supervised!({P, name: :pubsub_with_dispatching,
+      {:ok, _} = start_supervised({P, name: :pubsub_with_dispatching,
                          topology: topology, dispatcher: {__MODULE__, :custom_dispatcher}})
       P.subscribe(:pubsub_with_dispatching, topic, :register)
       P.broadcast_from(:pubsub_with_dispatching, self(), topic, :message)
