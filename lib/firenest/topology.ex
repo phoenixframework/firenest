@@ -14,7 +14,7 @@ defmodule Firenest.Topology do
   processes currently are identified by the local atom name.
 
   An instance of `Firenest.Topology` must be started per node,
-  via the `start_link/1` function, alongside the proper adapter.
+  via the `child_spec/1` function, alongside the proper adapter.
   All topologies are also locally named.
 
   Firenest ships with a default topology called `Firenest.Topology.Erlang`
@@ -28,14 +28,13 @@ defmodule Firenest.Topology do
   @type name :: atom
 
   @doc """
-  Starts a `topology`.
+  Returns the child specification for a topology.
 
-  Implementation-wise, the topology must create an ETS table
-  with the same as the topology and register the key `:adapter`
-  under it, pointing to a module that implements the topology
-  callbacks.
+  When started, the topology must create an ETS table with the same
+  as the topology and register the key `:adapter` under it, pointing
+  to a module that implements the topology callbacks.
   """
-  @callback start_link(keyword()) :: {:ok, pid} | {:error, term}
+  @callback child_spec(keyword()) :: Supervisor.child_spec()
 
   @doc """
   Returns the name of the current node in `topology`.
@@ -73,36 +72,28 @@ defmodule Firenest.Topology do
   @callback sync_named(t, pid) :: {:ok, [{node, id :: term}]} | {:error, {:already_synced, pid}}
 
   @doc """
-  Starts a topology with the given `options`.
+  Returns the child specification for a topology.
 
   The `:adapter` and `:name` keys are required as part of `options`.
   All other keys have their semantics dictated by the adapter.
 
-  It returns `{:ok, pid}` where `pid` represents a supervisor or
-  `{:error, term}`.
-
   ## Examples
 
-  Most times the topology is started as part of your supervision tree:
+  This is used to start the topology as part of your supervision tree:
 
-      supervisor(Firenest.Topology, [topology: MyApp.Topology, adapter: Firenest.Topology.Erlang])
-
-  which is equivalent to calling:
-
-      Firenest.Topology.start_link(topology: MyApp.Topology, adapter: Firenest.Topology.Erlang)
+      {Firenest.Topology, topology: MyApp.Topology, adapter: Firenest.Topology.Erlang}
 
   """
-  @spec start_link(keyword()) :: {:ok, pid} | {:error, term}
-  def start_link(options) do
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
+  def child_spec(options) do
     name = options[:name]
     {adapter, options} = Keyword.pop(options, :adapter)
 
     unless adapter && name do
-      raise ArgumentError,
-        "Firenest.Topology.start_link/1 expects :adapter and :name as options"
+      raise ArgumentError, "Firenest.Topology.child_spec/1 expects :adapter and :name as options"
     end
 
-    adapter.start_link(options)
+    adapter.child_spec(options)
   end
 
   @doc """

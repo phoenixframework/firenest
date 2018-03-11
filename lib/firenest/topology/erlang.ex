@@ -27,38 +27,10 @@ defmodule Firenest.Topology.Erlang do
   not want to manually manage their own list of nodes.
   """
 
-  defmodule Supervisor do
-    @moduledoc false
-
-    use Elixir.Supervisor
-
-    def start_link(opts) do
-      topology = opts[:name]
-      name = Module.concat(topology, "Supervisor")
-      Elixir.Supervisor.start_link(__MODULE__, {topology, opts}, name: name)
-    end
-
-    def init({topology, _opts}) do
-      ^topology = :ets.new(topology, [:set, :public, :named_table, read_concurrency: true])
-      true = :ets.insert(topology, {:adapter, Firenest.Topology.Erlang})
-
-      children = [
-        %{
-          id: topology,
-          start: {GenServer, :start_link, [Firenest.Topology.Erlang, topology, [name: topology]]}
-        }
-      ]
-
-      Supervisor.init(children, strategy: :one_for_one)
-    end
-  end
-
-  ## Topology callbacks
-
   @behaviour Firenest.Topology
   @timeout 5000
 
-  defdelegate start_link(opts), to: Supervisor
+  defdelegate child_spec(opts), to: Firenest.Topology.Erlang.Supervisor
 
   def connect(topology, node) when is_atom(node) do
     fn ->
@@ -107,7 +79,7 @@ defmodule Firenest.Topology.Erlang do
     end
   end
 
-  def sync_named(topology, pid, timeout \\ 5000) when is_pid(pid) do
+  def sync_named(topology, pid, timeout \\ @timeout) when is_pid(pid) do
     case Process.info(pid) do
       {:registered_name, []} ->
         raise ArgumentError,
@@ -132,10 +104,35 @@ defmodule Firenest.Topology.Erlang do
   defp subscribe(topology, pid) when is_pid(pid) do
     GenServer.call(topology, {:subscribe, pid})
   end
+end
 
-  ## GenServer callbacks
+defmodule Firenest.Topology.Erlang.Supervisor do
+  @moduledoc false
+
+  use Supervisor
+
+  def start_link(opts) do
+    topology = Keyword.fetch!(opts, :name)
+    name = Module.concat(topology, "Supervisor")
+    Supervisor.start_link(__MODULE__, topology, name: name)
+  end
+
+  def init(topology) do
+    ^topology = :ets.new(topology, [:set, :public, :named_table, read_concurrency: true])
+    true = :ets.insert(topology, {:adapter, Firenest.Topology.Erlang})
+    children = [{Firenest.Topology.Erlang.Server, topology}]
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end
+
+defmodule Firenest.Topology.Erlang.Server do
+  @moduledoc false
 
   use GenServer
+
+  def start_link(topology) do
+    GenServer.start_link(__MODULE__, topology, name: topology)
+  end
 
   def init(topology) do
     # We need to monitor nodes before we do the first broadcast.

@@ -40,39 +40,8 @@ defmodule Firenest.PubSub do
     defexception [:message]
   end
 
-  defmodule Dispatcher do
-    @moduledoc false
-
-    use GenServer
-
-    def dispatch(entries, from, message) do
-      Enum.each entries, fn
-        {pid, _} when pid == from ->
-          :ok
-        {pid, _} ->
-          send(pid, message)
-      end
-    end
-
-    def start_link({name, pubsub, module, function}) do
-      GenServer.start_link(__MODULE__, {pubsub, module, function}, name: name)
-    end
-
-    def init(state) do
-      {:ok, state}
-    end
-
-    def handle_info({:broadcast, topics, message}, state) do
-      {pubsub, module, function} = state
-      for topic <- topics do
-        Registry.dispatch(pubsub, topic, {module, function, [:none, message]})
-      end
-      {:noreply, state}
-    end
-  end
-
   @doc """
-  Starts a pubsub with the given `options`.
+  Returns a child specifiction for pubsub with the given `options`.
 
   The `:name` and `:topology` keys are required as part of `options`.
   `:name` refers to the name of the pubsub to be started and `:topology`
@@ -92,38 +61,14 @@ defmodule Firenest.PubSub do
       there is a broadcast and must perform local message deliveries. It
       receives the subscriptions entries, the broadcaster identifier and the
       message to broadcast
+
   """
-  @spec start_link(options) :: {:ok, pid} | {:error, term} when
+  @spec child_spec(options) :: Supervisor.child_spec when
         options: [name: t,
                   topology: Firenest.Topology.t,
                   partitions: pos_integer(),
                   dispatcher: {module, function}]
-  def start_link(options) do
-    pubsub = options[:name]
-    topology = options[:topology]
-    partitions = options[:partitions] ||
-                 (System.schedulers_online |> Kernel./(4) |> Float.ceil() |> trunc())
-    {module, function} = options[:dispatcher] || {Dispatcher, :dispatch}
-
-    unless pubsub && topology do
-      raise ArgumentError,
-        "Firenest.Topology.start_link/1 expects :name and :topology as options"
-    end
-
-    supervisor = Module.concat(pubsub, "Supervisor")
-    dispatcher = Module.concat(pubsub, "Dispatcher")
-    registry = [meta: [pubsub: {topology, dispatcher, module, function}],
-                partitions: partitions,
-                keys: :duplicate,
-                name: pubsub]
-
-    children = [
-      {Registry, registry},
-      {Dispatcher, {dispatcher, pubsub, module, function}}
-    ]
-
-    Supervisor.start_link(children, strategy: :rest_for_one, name: supervisor)
-  end
+  defdelegate child_spec(options), to: Firenest.PubSub.Supervisor
 
   @doc """
   Returns all topics the `pid` is subscribed to in `pubsub`.
@@ -142,7 +87,7 @@ defmodule Firenest.PubSub do
   ## The dispatching value
 
   An optional `value` may be given which may be used by custom
-  dispatchers (see `start_link/1`). For instance, Phoenix Channels
+  dispatchers (see `child_spec/1`). For instance, Phoenix Channels
   use a custom `value` to provide "fastlaning", allowing messages
   broadcast to thousands or even millions of users to be encoded
   once and written directly to sockets instead of being encoded per
@@ -267,5 +212,76 @@ defmodule Firenest.PubSub do
       topic -> raise ArgumentError, "topic must be a string, got: #{inspect topic}"
     end
     :ok
+  end
+end
+
+defmodule Firenest.PubSub.Dispatcher do
+  @moduledoc false
+
+  use GenServer
+
+  def dispatch(entries, from, message) do
+    Enum.each entries, fn
+      {pid, _} when pid == from ->
+        :ok
+      {pid, _} ->
+        send(pid, message)
+    end
+  end
+
+  def start_link({name, pubsub, module, function}) do
+    GenServer.start_link(__MODULE__, {pubsub, module, function}, name: name)
+  end
+
+  def init(state) do
+    {:ok, state}
+  end
+
+  def handle_info({:broadcast, topics, message}, state) do
+    {pubsub, module, function} = state
+
+    for topic <- topics do
+      Registry.dispatch(pubsub, topic, {module, function, [:none, message]})
+    end
+
+    {:noreply, state}
+  end
+end
+
+defmodule Firenest.PubSub.Supervisor do
+  @moduledoc false
+
+  use Supervisor
+
+  def start_link(options) do
+    pubsub = options[:name]
+    topology = options[:topology]
+
+    unless pubsub && topology do
+      raise ArgumentError,
+        "Firenest.PubSub.child_spec/1 expects :name and :topology as options"
+    end
+
+    supervisor = Module.concat(pubsub, "Supervisor")
+    Supervisor.start_link(__MODULE__, {pubsub, topology, options}, name: supervisor)
+  end
+
+  def init({pubsub, topology, options}) do
+    partitions = options[:partitions] ||
+                 (System.schedulers_online |> Kernel./(4) |> Float.ceil() |> trunc())
+    {module, function} = options[:dispatcher] || {Firenest.PubSub.Dispatcher, :dispatch}
+
+    dispatcher = Module.concat(pubsub, "Dispatcher")
+    registry = [meta: [pubsub: {topology, dispatcher, module, function}],
+                partitions: partitions,
+                keys: :duplicate,
+                name: pubsub]
+
+    children = [
+      {Registry, registry},
+      {Firenest.PubSub.Dispatcher, {dispatcher, pubsub, module, function}}
+    ]
+
+    Supervisor.init(children, strategy: :rest_for_one)
   end
 end
