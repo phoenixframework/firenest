@@ -19,29 +19,6 @@ defmodule Firenest.Topology do
 
   Firenest ships with a default topology called `Firenest.Topology.Erlang`
   that uses the Erlang distribution to build a fully meshed topology.
-
-  ## Subscription
-
-  It is possible for a process to subscribe to events whenever a given
-  topology changes by calling `subscribe/2`. The following events are
-  delivered with the following guarantees:
-
-    * `{:nodeup, node}` is delivered to the subscribed process whenever
-      a new node comes up. The message is guaranteed to be delivered
-      after the node is added to the list returned by `nodes/2`. There
-      is no guarantee the `{:nodeup, node}` will be delivered before
-      any messages from that node.
-
-  * `{:nodedown, node}` is delivered to the subscribed process whenever
-      a known node is down. The message is guaranteed to be delivered
-      after the node is removed from the list returned by `nodes/2`.
-      The nodedown notification is guaranteed to be delivered after all
-      messages from that node (although it is not guaranteed to be delivered
-      before all monitoring signals).
-
-  In a case node loses connection and reconnects (either due to network
-  partitions or because it crashed), a `:nodedown` for that node is
-  guaranteed to be delivered before `:nodeup` event.
   """
 
   @typedoc "An atom identifying the topology name."
@@ -91,19 +68,9 @@ defmodule Firenest.Topology do
   @callback disconnect(t, node) :: true | false | :ignored
 
   @doc """
-  Monitors the given `name` in `node`.
+  Syncs the given `pid` across the topology using its name.
   """
-  @callback monitor(t, node, name) :: reference
-
-  @doc """
-  Subscribes `pid` to the `topology` `:nodeup` and `:nodedown` events.
-  """
-  @callback subscribe(t, pid) :: reference
-
-  @doc """
-  Unsubscribes `ref` from the `topology` events.
-  """
-  @callback unsubscribe(t, reference) :: :ok
+  @callback sync_named(t, pid) :: {:ok, [{node, id :: term}]} | {:error, {:already_synced, pid}}
 
   @doc """
   Starts a topology with the given `options`.
@@ -202,7 +169,7 @@ defmodule Firenest.Topology do
   is not online or if the operation is not supported.
   """
   @spec connect(t, node) :: true | false | :ignored
-  def connect(topology, node) do
+  def connect(topology, node) when is_atom(topology) and is_atom(node) do
     adapter!(topology).connect(topology, node)
   end
 
@@ -215,54 +182,47 @@ defmodule Firenest.Topology do
   or if the operation is not supported.
   """
   @spec disconnect(t, node) :: true | false | :ignored
-  def disconnect(topology, node) do
+  def disconnect(topology, node) when is_atom(topology) and is_atom(node) do
     adapter!(topology).disconnect(topology, node)
   end
 
   @doc """
-  Monitors the given `name` in `node` through `topology`.
+  Syncs the given `pid` across the topology using its name.
 
-  Once the monitored process crashes (or the connection to
-  the node the monitored process runs on is lost), a message
-  with the format described below is delivered to the caller
-  process:
+  This function is the building block for building static services
+  on top of the topology. It allows the current process to know whenever
+  another process with the same name goes up or down in the topology
+  as long as processes call `sync_named/2`.
 
-      {:DOWN, ref, :process, {name, node}, reason}
+  This function returns `{:ok, nodes}` in case the given pid has not
+  been synced yet, `{:error, {:already_synced, pid}}` otherwise.
+  `nodes` is a list of tuples with the first element with the node
+  name as an atom and the second element is a term used to version
+  that node name.
 
-  Where `ref` is the reference returned by `monitor/3` and `reason`
-  is the reason the process exited.
+  Once this function is called, the given process `pid` will receive
+  two messages with the following guarantees:
 
-  This operations always return a `reference`, regardless if
-  there is a connection to `node` or not. In case there is no
-  connection, a DOWN message will be delivered to the caller with
-  reason of `:noconnection`. In case there is no process with `name`
-  in `node`, a DOWN message with reason of `:noproc` is sent.
+    * `{:named_up, node, id, name}` is delivered whenever a process
+      with name `name` is up on the given `node-id` pair. The message
+      is guaranteed to be delivered after the node is added to the list
+      returned by `nodes/2`.
+
+  * `{:named_down, node, id, name}` is delivered whenever a process
+      with name `name` is down on the given `node-id` pair. It can be
+      deivered when such processes crashes or when there is a disconnection.
+      The message is guaranteed to be delivered after the node is removed
+      from the list returned by `nodes/2`. Note the topology may not
+      necessarily guarantee that no messages are received from `name`
+      after this message is sent.
+
+  In a case node loses connection and reconnects (either due to network
+  partitions or because it crashed), a `:named_down` for that node is
+  guaranteed to be delivered before `:named_up` event.
   """
-  @spec monitor(t, node, name) :: reference
-  def monitor(topology, node, name) do
-    adapter!(topology).monitor(topology, node, name)
-  end
-
-  @doc """
-  Subscribes `pid` to the `topology` `:nodeup` and `:nodedown` events.
-
-  See the module documentation for a description of events and their
-  guarantees.
-  """
-  @spec subscribe(t, pid) :: reference
-  def subscribe(topology, pid) do
-    adapter!(topology).subscribe(topology, pid)
-  end
-
-  @doc """
-  Unsubscribes `ref` from the `topology` events.
-
-  See the module documentation for a description of events and their
-  guarantees.
-  """
-  @spec unsubscribe(t, reference) :: :ok
-  def unsubscribe(topology, ref) do
-    adapter!(topology).unsubscribe(topology, ref)
+  @spec sync_named(t, pid) :: {:ok, [{node(), id :: term}]} | {:error, {:already_synced, pid}}
+  def sync_named(topology, pid) when is_pid(pid) do
+    adapter!(topology).sync_named(topology, pid)
   end
 
   defp adapter!(name) do
