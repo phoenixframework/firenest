@@ -181,6 +181,10 @@ defmodule Firenest.Topology.Erlang.Server do
     end
   end
 
+  def handle_info({:DOWN, ref, _, pid, _}, state) when Kernel.node(pid) != Kernel.node() do
+    {:noreply, delete_node(state, pid, ref)}
+  end
+
   def handle_info({:DOWN, ref, _, _, _}, %{monitors: monitors} = state) do
     case monitors do
       %{^ref => _} ->
@@ -261,10 +265,6 @@ defmodule Firenest.Topology.Erlang.Server do
 
   def handle_info({:pong, other_id, pid, monitors}, state) do
     {:noreply, add_node(state, other_id, pid, monitors)}
-  end
-
-  def handle_info({:DOWN, ref, _, pid, _}, state) when Kernel.node(pid) != Kernel.node() do
-    {:noreply, delete_node(state, pid, ref)}
   end
 
   ## Helpers

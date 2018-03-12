@@ -78,4 +78,124 @@ defmodule Firenest.TopologyTest do
       refute_received {:reply, :"first@127.0.0.1"}
     end
   end
+
+  describe "connection" do
+    @describetag :connection
+
+    @node :"subscribe@127.0.0.1"
+    test "may be set and managed explicitly", %{topology: topology} do
+      # No node yet
+      refute T.disconnect(topology, @node)
+      refute @node in T.nodes(topology)
+
+      # Start the node but not firenest
+      Firenest.Test.spawn_nodes([@node])
+      refute @node in T.nodes(topology)
+
+      # Finally start firenest
+      Firenest.Test.start_firenest([@node], adapter: T.adapter!(topology))
+      assert T.connect(topology, @node)
+      assert @node in T.nodes(topology)
+
+      # Connect should still return true
+      assert T.connect(topology, @node)
+
+      # Now let's diconnect
+      assert T.disconnect(topology, @node)
+      refute @node in T.nodes(topology)
+
+      # And we can't connect it back because it is permanently down
+      refute T.connect(topology, @node)
+    after
+      T.disconnect(topology, @node)
+    end
+  end
+
+  describe "sync_named/2" do
+    @describetag :sync_named
+
+    test "raises when process is not named", config do
+      %{topology: topology, test: test} = config
+      Process.unregister(test)
+
+      assert_raise ArgumentError, ~r/cannot sync process/, fn ->
+        T.sync_named(topology, self())
+      end
+    end
+
+    test "cannot sync the same name twice", config do
+      %{topology: topology} = config
+      assert T.sync_named(topology, self()) == {:ok, []}
+      assert T.sync_named(topology, self()) == {:error, {:already_synced, self()}}
+    end
+
+    @node :"sync_named@127.0.0.1"
+    test "receives messages from nodes across the network", config do
+      %{topology: topology, evaluator: evaluator, test: test} = config
+
+      # We start sync named and make sure it is up
+      start_sync_named_on(topology, :"second@127.0.0.1", evaluator, test)
+      wait_until_at_least_one_sync_named(topology, test)
+      assert {:ok, [{:"second@127.0.0.1", _second_id}]} = T.sync_named(topology, self())
+
+      # Make another node sync when we are already synced
+      start_sync_named_on(topology, :"third@127.0.0.1", evaluator, test)
+      assert_receive {:named_up, :"third@127.0.0.1", third_id, ^test}
+
+      # Let's bring yet another node up
+      Firenest.Test.spawn_nodes([@node])
+      Firenest.Test.start_firenest([@node], adapter: T.adapter!(topology))
+      start_sync_named_on(topology, @node, evaluator, test)
+      assert_receive {:named_up, @node, node_id, ^test}
+
+      # And now let's disconnect from it
+      assert T.disconnect(topology, @node)
+      assert_receive {:named_down, @node, ^node_id, ^test}
+
+      # And now let's kill the named process running on third
+      T.send(topology, :"third@127.0.0.1", evaluator, {:eval_quoted, quote do
+        Process.exit(Process.whereis(unquote(test)), :shutdown)
+      end})
+      assert_receive {:named_down, :"third@127.0.0.1", ^third_id, ^test}
+    end
+
+    defp start_sync_named_on(topology, node, evaluator, name) do
+      T.send(topology, node, evaluator, {:eval_quoted, quote do
+        Task.start_link(fn ->
+          Process.register(self(), unquote(name))
+          T.sync_named(unquote(topology), self())
+          Process.sleep(:infinity)
+        end)
+      end})
+    end
+
+    defp wait_until_at_least_one_sync_named(topology, name) do
+      Process.unregister(name)
+
+      wait_until(fn ->
+        fn ->
+          Process.register(self(), name)
+          T.sync_named(topology, self()) != {:ok, []}
+        end
+        |> Task.async()
+        |> Task.await()
+      end)
+
+      Process.register(self(), name)
+    end
+  end
+
+  defp wait_until(fun, count \\ 1000) do
+    cond do
+      count == 0 ->
+        raise "waited until fun returned true but it never did"
+
+      fun.() ->
+        :ok
+
+      true ->
+        Process.sleep(10)
+        wait_until(fun, count - 1)
+    end
+  end
 end

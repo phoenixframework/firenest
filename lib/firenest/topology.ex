@@ -218,7 +218,12 @@ defmodule Firenest.Topology do
     adapter!(topology).sync_named(topology, pid)
   end
 
-  defp adapter!(name) do
+  @doc """
+  Gets the adapter for the topology.
+
+  Expects the topology to be running, otherwise it raises.
+  """
+  def adapter!(name) do
     try do
       :ets.lookup_element(name, :adapter, 2)
     catch
