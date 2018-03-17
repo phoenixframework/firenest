@@ -161,7 +161,7 @@ defmodule Firenest.TopologyTest do
 
     defp start_sync_named_on(topology, node, evaluator, name) do
       T.send(topology, node, evaluator, {:eval_quoted, quote do
-        Task.start_link(fn ->
+        Task.start(fn ->
           Process.register(self(), unquote(name))
           T.sync_named(unquote(topology), self())
           Process.sleep(:infinity)
