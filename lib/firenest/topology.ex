@@ -31,8 +31,8 @@ defmodule Firenest.Topology do
   Returns the child specification for a topology.
 
   When started, the topology must create an ETS table with the same
-  as the topology and register the key `:adapter` under it, pointing
-  to a module that implements the topology callbacks.
+  name as the topology and register the key `:adapter` under it,
+  pointing to a module that implements the topology callbacks.
   """
   @callback child_spec(keyword()) :: Supervisor.child_spec()
 
@@ -213,7 +213,7 @@ defmodule Firenest.Topology do
   partitions or because it crashed), a `:named_down` for that node is
   guaranteed to be delivered before `:named_up` event.
   """
-  @spec sync_named(t, pid) :: {:ok, [{node(), id :: term}]} | {:error, {:already_synced, pid}}
+  @spec sync_named(t, pid) :: {:ok, [{node, id :: term}]} | {:error, {:already_synced, pid}}
   def sync_named(topology, pid) when is_pid(pid) do
     adapter!(topology).sync_named(topology, pid)
   end

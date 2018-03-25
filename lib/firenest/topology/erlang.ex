@@ -34,9 +34,9 @@ defmodule Firenest.Topology.Erlang do
 
   def connect(topology, node) when is_atom(node) do
     fn ->
-      subscribe(topology, self())
+      ref = subscribe(topology, self())
       case :net_kernel.connect(node) do
-        true -> node in nodes(topology) or wait_until({:nodeup, node})
+        true -> node in nodes(topology) or wait_until({:nodeup, ref, node})
         false -> false
         :ignored -> :ignored
       end
@@ -47,9 +47,9 @@ defmodule Firenest.Topology.Erlang do
 
   def disconnect(topology, node) when is_atom(node) do
     fn ->
-      subscribe(topology, self())
+      ref = subscribe(topology, self())
       case node in nodes(topology) and :net_kernel.disconnect(node) do
-        true -> wait_until({:nodedown, node})
+        true -> wait_until({:nodedown, ref, node})
         false -> false
         :ignored -> :ignored
       end
@@ -119,15 +119,18 @@ defmodule Firenest.Topology.Erlang.Server do
   def init(topology) do
     # Setup the topology ets table contract.
     ^topology = :ets.new(topology, [:set, :public, :named_table, read_concurrency: true])
+
+    # Node names are also stored in an ETS table for fast lookups.
+    # We need to do this before we write the adapter because once
+    # the adapter is written the table is considered as ready.
+    persist_node_names(topology, %{})
+
     true = :ets.insert(topology, {:adapter, Firenest.Topology.Erlang})
 
     # We need to monitor nodes before we do the first broadcast.
     # Otherwise a node can come up between the first broadcast and
     # the first notification.
     :ok = :net_kernel.monitor_nodes(true, node_type: :all)
-
-    # Node names are also stored in an ETS table for fast lookups.
-    persist_node_names(topology, %{})
 
     # We generate a unique ID to be used alongside the node name
     # to guarantee uniqueness in case of restarts. Then we do a
@@ -270,11 +273,11 @@ defmodule Firenest.Topology.Erlang.Server do
   ## Helpers
 
   defp ping(node, topology, id, monitors) when is_list(monitors) do
-    send({topology, node}, {:ping, id, self(), monitors})
+    Process.send({topology, node}, {:ping, id, self(), monitors}, [:noconnect])
   end
 
   defp pong(pid, id, monitors) when is_list(monitors) do
-    send(pid, {:pong, id, self(), monitors})
+    Process.send(pid, {:pong, id, self(), monitors}, [:noconnect])
   end
 
   defp id() do
@@ -345,7 +348,7 @@ defmodule Firenest.Topology.Erlang.Server do
     nodes = Map.put(nodes, node, {id, Process.monitor(pid), remote_names})
     persist_node_names(topology, nodes)
 
-    _ = for {_, pid} <- subscribers, do: send(pid, {:nodeup, node})
+    _ = for {ref, pid} <- subscribers, do: send(pid, {:nodeup, ref, node})
     _ = for {_, name} <- monitors, do: local_monitor_up(local_names, node, id, name)
     %{state | nodes: nodes}
   end
@@ -365,7 +368,7 @@ defmodule Firenest.Topology.Erlang.Server do
     nodes = Map.delete(nodes, node)
     persist_node_names(topology, nodes)
 
-    _ = for {_, pid} <- subscribers, do: send(pid, {:nodedown, node})
+    _ = for {ref, pid} <- subscribers, do: send(pid, {:nodedown, ref, node})
     %{state | nodes: nodes}
   end
 
