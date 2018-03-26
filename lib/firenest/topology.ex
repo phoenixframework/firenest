@@ -209,8 +209,8 @@ defmodule Firenest.Topology do
       necessarily guarantee that no messages are received from `name`
       after this message is sent.
 
-  In a case node loses connection and reconnects (either due to network
-  partitions or because it crashed), a `:named_down` for that node is
+  If the connection to a node is lost, perhaps due to a network partition
+  or crash, and then reestablished, a `:named_down` for that node is
   guaranteed to be delivered before `:named_up` event.
   """
   @spec sync_named(t, pid) :: {:ok, [{node, id :: term}]} | {:error, {:already_synced, pid}}
