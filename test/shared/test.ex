@@ -24,6 +24,7 @@ defmodule Firenest.Test do
       Code.eval_quoted(quoted)
       {:noreply, state}
     end
+
     def handle_info(_, state) do
       {:noreply, state}
     end
@@ -59,27 +60,28 @@ defmodule Firenest.Test do
   Starts firenest on the given nodes.
   """
   def start_firenest(nodes, options) do
-    start_link(nodes, Firenest.Topology, [[name: Firenest.Test] ++ options])
-    start_link(nodes, Evaluator, [])
+    %{start: start} = Firenest.Topology.child_spec([name: Firenest.Test] ++ options)
+    start_link(nodes, start)
+    start_link(nodes, {Evaluator, :start_link, []})
   end
 
   @doc """
   Starts a process given by module and args on the given nodes.
   """
-  def start_link(nodes, module, args) do
-    case :rpc.multicall(nodes, __MODULE__, :start_link, [module, args]) do
+  def start_link(nodes, mfa) when is_tuple(mfa) do
+    case :rpc.multicall(nodes, __MODULE__, :start_link, [mfa]) do
       {_, []}  -> :ok
-      {_, bad} -> raise "starting #{inspect module} in cluster failed on nodes #{inspect bad}"
+      {_, bad} -> raise "starting #{inspect mfa} in cluster failed on nodes #{inspect bad}"
     end
     :ok
   end
 
   @doc false
-  def start_link(module, args) do
+  def start_link({module, function, args}) do
     parent = self()
 
     {:ok, task} = Task.start_link(fn ->
-      apply(module, :start_link, args)
+      apply(module, function, args)
       send(parent, self())
       Process.sleep(:infinity)
     end)

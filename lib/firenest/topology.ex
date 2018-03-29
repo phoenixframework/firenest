@@ -14,34 +14,11 @@ defmodule Firenest.Topology do
   processes currently are identified by the local atom name.
 
   An instance of `Firenest.Topology` must be started per node,
-  via the `start_link/1` function, alongside the proper adapter.
+  via the `child_spec/1` function, alongside the proper adapter.
   All topologies are also locally named.
 
   Firenest ships with a default topology called `Firenest.Topology.Erlang`
   that uses the Erlang distribution to build a fully meshed topology.
-
-  ## Subscription
-
-  It is possible for a process to subscribe to events whenever a given
-  topology changes by calling `subscribe/2`. The following events are
-  delivered with the following guarantees:
-
-    * `{:nodeup, node}` is delivered to the subscribed process whenever
-      a new node comes up. The message is guaranteed to be delivered
-      after the node is added to the list returned by `nodes/2`. There
-      is no guarantee the `{:nodeup, node}` will be delivered before
-      any messages from that node.
-
-  * `{:nodedown, node}` is delivered to the subscribed process whenever
-      a known node is down. The message is guaranteed to be delivered
-      after the node is removed from the list returned by `nodes/2`.
-      The nodedown notification is guaranteed to be delivered after all
-      messages from that node (although it is not guaranteed to be delivered
-      before all monitoring signals).
-
-  In a case node loses connection and reconnects (either due to network
-  partitions or because it crashed), a `:nodedown` for that node is
-  guaranteed to be delivered before `:nodeup` event.
   """
 
   @typedoc "An atom identifying the topology name."
@@ -51,14 +28,13 @@ defmodule Firenest.Topology do
   @type name :: atom
 
   @doc """
-  Starts a `topology`.
+  Returns the child specification for a topology.
 
-  Implementation-wise, the topology must create an ETS table
-  with the same as the topology and register the key `:adapter`
-  under it, pointing to a module that implements the topology
-  callbacks.
+  When started, the topology must create an ETS table with the same
+  name as the topology and register the key `:adapter` under it,
+  pointing to a module that implements the topology callbacks.
   """
-  @callback start_link(keyword()) :: {:ok, pid} | {:error, term}
+  @callback child_spec(keyword()) :: Supervisor.child_spec()
 
   @doc """
   Returns the name of the current node in `topology`.
@@ -91,51 +67,33 @@ defmodule Firenest.Topology do
   @callback disconnect(t, node) :: true | false | :ignored
 
   @doc """
-  Monitors the given `name` in `node`.
+  Syncs the given `pid` across the topology using its name.
   """
-  @callback monitor(t, node, name) :: reference
+  @callback sync_named(t, pid) :: {:ok, [{node, id :: term}]} | {:error, {:already_synced, pid}}
 
   @doc """
-  Subscribes `pid` to the `topology` `:nodeup` and `:nodedown` events.
-  """
-  @callback subscribe(t, pid) :: reference
-
-  @doc """
-  Unsubscribes `ref` from the `topology` events.
-  """
-  @callback unsubscribe(t, reference) :: :ok
-
-  @doc """
-  Starts a topology with the given `options`.
+  Returns the child specification for a topology.
 
   The `:adapter` and `:name` keys are required as part of `options`.
   All other keys have their semantics dictated by the adapter.
 
-  It returns `{:ok, pid}` where `pid` represents a supervisor or
-  `{:error, term}`.
-
   ## Examples
 
-  Most times the topology is started as part of your supervision tree:
+  This is used to start the topology as part of your supervision tree:
 
-      supervisor(Firenest.Topology, [topology: MyApp.Topology, adapter: Firenest.Topology.Erlang])
-
-  which is equivalent to calling:
-
-      Firenest.Topology.start_link(topology: MyApp.Topology, adapter: Firenest.Topology.Erlang)
+      {Firenest.Topology, topology: MyApp.Topology, adapter: Firenest.Topology.Erlang}
 
   """
-  @spec start_link(keyword()) :: {:ok, pid} | {:error, term}
-  def start_link(options) do
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
+  def child_spec(options) do
     name = options[:name]
     {adapter, options} = Keyword.pop(options, :adapter)
 
     unless adapter && name do
-      raise ArgumentError,
-        "Firenest.Topology.start_link/1 expects :adapter and :name as options"
+      raise ArgumentError, "Firenest.Topology.child_spec/1 expects :adapter and :name as options"
     end
 
-    adapter.start_link(options)
+    adapter.child_spec(options)
   end
 
   @doc """
@@ -202,7 +160,7 @@ defmodule Firenest.Topology do
   is not online or if the operation is not supported.
   """
   @spec connect(t, node) :: true | false | :ignored
-  def connect(topology, node) do
+  def connect(topology, node) when is_atom(topology) and is_atom(node) do
     adapter!(topology).connect(topology, node)
   end
 
@@ -215,57 +173,60 @@ defmodule Firenest.Topology do
   or if the operation is not supported.
   """
   @spec disconnect(t, node) :: true | false | :ignored
-  def disconnect(topology, node) do
+  def disconnect(topology, node) when is_atom(topology) and is_atom(node) do
     adapter!(topology).disconnect(topology, node)
   end
 
   @doc """
-  Monitors the given `name` in `node` through `topology`.
+  Syncs the given `pid` across the topology using its name.
 
-  Once the monitored process crashes (or the connection to
-  the node the monitored process runs on is lost), a message
-  with the format described below is delivered to the caller
-  process:
+  This function is the building block for building static services
+  on top of the topology. It allows the current process to know whenever
+  another process with the same name goes up or down in the topology
+  as long as processes call `sync_named/2`.
 
-      {:DOWN, ref, :process, {name, node}, reason}
+  This function returns `{:ok, nodes}` in case the given pid has not
+  been synced yet, `{:error, {:already_synced, pid}}` otherwise.
+  `nodes` is a list of tuples with the first element with the node
+  name as an atom and the second element is a term used to version
+  that node name. Only the nodes that are known to have a service
+  with the same `name` running and that have already called `sync_named/2`
+  will be included in the list.
 
-  Where `ref` is the reference returned by `monitor/3` and `reason`
-  is the reason the process exited.
+  Once this function is called, the given process `pid` will receive
+  two messages with the following guarantees:
 
-  This operations always return a `reference`, regardless if
-  there is a connection to `node` or not. In case there is no
-  connection, a DOWN message will be delivered to the caller with
-  reason of `:noconnection`. In case there is no process with `name`
-  in `node`, a DOWN message with reason of `:noproc` is sent.
+    * `{:named_up, node, id, name}` is delivered whenever a process
+      with name `name` is up on the given `node-id` pair. The message
+      is guaranteed to be delivered after the node is added to the list
+      returned by `nodes/2`.
+
+  * `{:named_down, node, id, name}` is delivered whenever a process
+      with name `name` is down on the given `node-id` pair. It can be
+      deivered when such processes crashes or when there is a disconnection.
+      The message is guaranteed to be delivered after the node is removed
+      from the list returned by `nodes/2`. Note the topology may not
+      necessarily guarantee that no messages are received from `name`
+      after this message is sent.
+
+  If the connection to a node is lost, perhaps due to a network partition
+  or crash, and then reestablished, a `:named_down` for that node is
+  guaranteed to be delivered before `:named_up` event. In case the service
+  goes up and down many times during a network partition, those events
+  won't be notified, only a `:named_down` event from the partition and
+  a `:named_up` on reconnection.
   """
-  @spec monitor(t, node, name) :: reference
-  def monitor(topology, node, name) do
-    adapter!(topology).monitor(topology, node, name)
+  @spec sync_named(t, pid) :: {:ok, [{node, id :: term}]} | {:error, {:already_synced, pid}}
+  def sync_named(topology, pid) when is_pid(pid) do
+    adapter!(topology).sync_named(topology, pid)
   end
 
   @doc """
-  Subscribes `pid` to the `topology` `:nodeup` and `:nodedown` events.
+  Gets the adapter for the topology.
 
-  See the module documentation for a description of events and their
-  guarantees.
+  Expects the topology to be running, otherwise it raises.
   """
-  @spec subscribe(t, pid) :: reference
-  def subscribe(topology, pid) do
-    adapter!(topology).subscribe(topology, pid)
-  end
-
-  @doc """
-  Unsubscribes `ref` from the `topology` events.
-
-  See the module documentation for a description of events and their
-  guarantees.
-  """
-  @spec unsubscribe(t, reference) :: :ok
-  def unsubscribe(topology, ref) do
-    adapter!(topology).unsubscribe(topology, ref)
-  end
-
-  defp adapter!(name) do
+  def adapter!(name) do
     try do
       :ets.lookup_element(name, :adapter, 2)
     catch

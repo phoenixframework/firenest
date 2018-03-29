@@ -7,7 +7,8 @@ defmodule Firenest.PubSubTest do
   setup_all do
     nodes = [:"first@127.0.0.1", :"second@127.0.0.1"]
     pubsub = Firenest.Test.PubSub
-    Firenest.Test.start_link(nodes, P, [[name: pubsub, topology: Firenest.Test]])
+    %{start: start} = P.child_spec(name: pubsub, topology: Firenest.Test)
+    Firenest.Test.start_link(nodes, start)
     {:ok, topology: Firenest.Test, evaluator: Firenest.Test.Evaluator, pubsub: pubsub}
   end
 
@@ -184,16 +185,16 @@ defmodule Firenest.PubSubTest do
     end
   end
 
-  describe "start_link/1" do
+  describe "child_spec/1" do
     test "supports and validates :partitions option", %{topology: topology} do
       Process.flag(:trap_exit, true)
-      {:error, _} = P.start_link(name: :pubsub_with_partitions,
-                                 topology: topology, partitions: 0)
+      {:error, _} = start_supervised({P, name: :pubsub_with_partitions,
+                                 topology: topology, partitions: 0})
     end
 
     test "supports custom dispatching", %{topology: topology, topic: topic} do
-      P.start_link(name: :pubsub_with_dispatching,
-                         topology: topology, dispatcher: {__MODULE__, :custom_dispatcher})
+      {:ok, _} = start_supervised({P, name: :pubsub_with_dispatching,
+                         topology: topology, dispatcher: {__MODULE__, :custom_dispatcher}})
       P.subscribe(:pubsub_with_dispatching, topic, :register)
       P.broadcast_from(:pubsub_with_dispatching, self(), topic, :message)
       assert_received {:custom_dispatcher, :register, pid, :message} when pid == self()

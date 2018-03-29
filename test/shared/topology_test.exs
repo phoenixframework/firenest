@@ -84,21 +84,17 @@ defmodule Firenest.TopologyTest do
 
     @node :"subscribe@127.0.0.1"
     test "may be set and managed explicitly", %{topology: topology} do
-      ref = T.subscribe(topology, self())
-      assert is_reference(ref)
-
       # No node yet
       refute T.disconnect(topology, @node)
-      refute_received {:nodedown, @node}
+      refute @node in T.nodes(topology)
 
       # Start the node but not firenest
       Firenest.Test.spawn_nodes([@node])
-      refute_received {:nodeup, @node}
       refute @node in T.nodes(topology)
 
       # Finally start firenest
-      Firenest.Test.start_firenest([@node], adapter: Firenest.Topology.Erlang)
-      assert_receive {:nodeup, @node}
+      Firenest.Test.start_firenest([@node], adapter: T.adapter!(topology))
+      assert T.connect(topology, @node)
       assert @node in T.nodes(topology)
 
       # Connect should still return true
@@ -106,84 +102,100 @@ defmodule Firenest.TopologyTest do
 
       # Now let's diconnect
       assert T.disconnect(topology, @node)
-      assert_receive {:nodedown, @node}
       refute @node in T.nodes(topology)
 
       # And we can't connect it back because it is permanently down
       refute T.connect(topology, @node)
-      refute_received {:nodeup, @node}
     after
       T.disconnect(topology, @node)
     end
   end
 
-  describe "monitor" do
-    @describetag :monitor
+  describe "sync_named/2" do
+    @describetag :sync_named
 
-    test "supports local names", %{topology: topology} do
-      {:ok, pid} = Agent.start(fn -> %{} end, name: :local_agent)
-      ref = T.monitor(topology, :"first@127.0.0.1", :local_agent)
-      refute_received {:DOWN, ^ref, _, _, _}
-      Process.exit(pid, {:shutdown, :custom_reason})
-      assert_receive {:DOWN, ^ref, :process, {:local_agent, :"first@127.0.0.1"}, {:shutdown, :custom_reason}}
+    test "raises when process is not named", config do
+      %{topology: topology, test: test} = config
+      Process.unregister(test)
+
+      assert_raise ArgumentError, ~r/cannot sync process/, fn ->
+        T.sync_named(topology, self())
+      end
     end
 
-    test "returns noproc for unknown local names", %{topology: topology} do
-      ref = T.monitor(topology, :"first@127.0.0.1", :local_agent)
-      assert_receive {:DOWN, ^ref, :process, {:local_agent, :"first@127.0.0.1"}, :noproc}
+    test "cannot sync the same name twice", config do
+      %{topology: topology} = config
+      assert T.sync_named(topology, self()) == {:ok, []}
+      assert T.sync_named(topology, self()) == {:error, {:already_synced, self()}}
     end
 
-    test "returns no connection for unknown nodes", %{topology: topology} do
-      ref = T.monitor(topology, :"unknown@127.0.0.1", :local_agent)
-      assert_receive {:DOWN, ^ref, :process, {:local_agent, :"unknown@127.0.0.1"}, :noconnection}
-    end
-
-    test "supports remote names", config do
+    @node :"sync_named@127.0.0.1"
+    test "receives messages from nodes across the network", config do
       %{topology: topology, evaluator: evaluator, test: test} = config
 
-      T.send(topology, :"second@127.0.0.1", evaluator, {:eval_quoted, quote do
-        {:ok, _} = Agent.start(fn -> %{} end, name: :topology_agent1)
-        T.send(unquote(topology), :"first@127.0.0.1", unquote(test), :done)
-      end})
+      # We start sync named and make sure it is up
+      start_sync_named_on(topology, :"second@127.0.0.1", evaluator, test)
+      wait_until_at_least_one_sync_named(topology, test)
+      assert {:ok, [{:"second@127.0.0.1", _second_id}]} = T.sync_named(topology, self())
 
-      assert_receive :done
-      ref = T.monitor(topology, :"second@127.0.0.1", :topology_agent1)
-      refute_received {:DOWN, ^ref, _, _, _}
+      # Make another node sync when we are already synced
+      start_sync_named_on(topology, :"third@127.0.0.1", evaluator, test)
+      assert_receive {:named_up, :"third@127.0.0.1", third_id, ^test}
 
-      T.send(topology, :"second@127.0.0.1", evaluator, {:eval_quoted, quote do
-        Process.exit(Process.whereis(:topology_agent1), {:shutdown, :custom_reason})
-      end})
-
-      assert_receive {:DOWN, ^ref, :process, {:topology_agent1, :"second@127.0.0.1"}, reason} when
-                     reason == :noproc or reason == {:shutdown, :custom_reason}
-    end
-
-    test "returns noproc for unknown remote names", %{topology: topology} do
-      ref = T.monitor(topology, :"second@127.0.0.1", :unknown_agent)
-      assert_receive {:DOWN, ^ref, :process, {:unknown_agent, :"second@127.0.0.1"}, :noproc}
-    end
-
-    @node :"topology@127.0.0.1"
-    test "returns noconnection on remote disconnection", config do
-      %{topology: topology, evaluator: evaluator, test: test} = config
-      T.subscribe(topology, self())
+      # Let's bring yet another node up
       Firenest.Test.spawn_nodes([@node])
-      Firenest.Test.start_firenest([@node], adapter: Firenest.Topology.Erlang)
-      assert_receive {:nodeup, @node}
+      Firenest.Test.start_firenest([@node], adapter: T.adapter!(topology))
+      start_sync_named_on(topology, @node, evaluator, test)
+      assert_receive {:named_up, @node, node_id, ^test}
 
-      T.send(topology, @node, evaluator, {:eval_quoted, quote do
-        {:ok, _} = Agent.start(fn -> %{} end, name: :topology_agent2)
-        T.send(unquote(topology), :"first@127.0.0.1", unquote(test), :done)
-      end})
-
-      assert_receive :done
-      ref = T.monitor(topology, @node, :topology_agent2)
-
+      # And now let's disconnect from it
       assert T.disconnect(topology, @node)
-      assert_receive {:nodedown, @node}
-      assert_receive {:DOWN, ^ref, :process, {:topology_agent2, @node}, :noconnection}
-    after
-      T.disconnect(config.topology, @node)
+      assert_receive {:named_down, @node, ^node_id, ^test}
+
+      # And now let's kill the named process running on third
+      T.send(topology, :"third@127.0.0.1", evaluator, {:eval_quoted, quote do
+        Process.exit(Process.whereis(unquote(test)), :shutdown)
+      end})
+      assert_receive {:named_down, :"third@127.0.0.1", ^third_id, ^test}
+    end
+
+    defp start_sync_named_on(topology, node, evaluator, name) do
+      T.send(topology, node, evaluator, {:eval_quoted, quote do
+        Task.start(fn ->
+          Process.register(self(), unquote(name))
+          T.sync_named(unquote(topology), self())
+          Process.sleep(:infinity)
+        end)
+      end})
+    end
+
+    defp wait_until_at_least_one_sync_named(topology, name) do
+      Process.unregister(name)
+
+      wait_until(fn ->
+        fn ->
+          Process.register(self(), name)
+          T.sync_named(topology, self()) != {:ok, []}
+        end
+        |> Task.async()
+        |> Task.await()
+      end)
+
+      Process.register(self(), name)
+    end
+  end
+
+  defp wait_until(fun, count \\ 1000) do
+    cond do
+      count == 0 ->
+        raise "waited until fun returned true but it never did"
+
+      fun.() ->
+        :ok
+
+      true ->
+        Process.sleep(10)
+        wait_until(fun, count - 1)
     end
   end
 end
