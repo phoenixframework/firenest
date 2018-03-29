@@ -211,7 +211,10 @@ defmodule Firenest.Topology do
 
   If the connection to a node is lost, perhaps due to a network partition
   or crash, and then reestablished, a `:named_down` for that node is
-  guaranteed to be delivered before `:named_up` event.
+  guaranteed to be delivered before `:named_up` event. In case the service
+  goes up and down many times during a network partition, those events
+  won't be notified, only a `:named_down` event from the partition and
+  a `:named_up` on reconnection.
   """
   @spec sync_named(t, pid) :: {:ok, [{node, id :: term}]} | {:error, {:already_synced, pid}}
   def sync_named(topology, pid) when is_pid(pid) do
