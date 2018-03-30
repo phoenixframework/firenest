@@ -213,7 +213,7 @@ defmodule Firenest.Topology.Erlang.Server do
       case nodes do
         # We know this node. The other node guarantees to deliver a monitor_down
         # before monitor_up for the same name, so we don't need to check this here.
-        %{^node => {^id, old_clock, node_ref, remote_names}} when clock == old_clock + 1 ->
+        %{^node => {^id, old_clock, node_ref, remote_names}} when old_clock == clock - 1 ->
           local_monitor_up(local_names, node, id, name)
 
           put_in(
@@ -221,8 +221,8 @@ defmodule Firenest.Topology.Erlang.Server do
             {id, clock, node_ref, Map.put(remote_names, name, monitor_ref)}
           )
 
-        %{^node => {^id, old_clock, _node_ref, _remote_names}} ->
-          clocks_out_of_sync(state, node, old_clock, clock)
+        %{^node => {^id, old_clock, node_ref, remote_names}} ->
+          clocks_out_of_sync(state, node, old_clock, clock, node_ref, remote_names)
 
         # We either have a mismatched or an unknown ID because the
         # PONG message has not been processed yet.
@@ -239,7 +239,7 @@ defmodule Firenest.Topology.Erlang.Server do
     state =
       case nodes do
         # We know this node and therefore we must know this name-monitor pair.
-        %{^node => {^id, old_clock, node_ref, remote_names}} when clock == old_clock + 1 ->
+        %{^node => {^id, old_clock, node_ref, remote_names}} when old_clock == clock - 1 ->
           ^monitor_ref = Map.fetch!(remote_names, name)
           local_monitor_down(local_names, node, id, name)
 
@@ -248,8 +248,8 @@ defmodule Firenest.Topology.Erlang.Server do
             {id, clock, node_ref, Map.delete(remote_names, name)}
           )
 
-        %{^node => {^id, old_clock, _node_ref, _remote_names}} ->
-          clocks_out_of_sync(state, node, old_clock, clock)
+        %{^node => {^id, old_clock, node_ref, remote_names}} ->
+          clocks_out_of_sync(state, node, old_clock, clock, node_ref, remote_names)
 
         # We either have a mismatched or an unknown ID because the
         # PONG message has not been processed yet.
@@ -447,7 +447,11 @@ defmodule Firenest.Topology.Erlang.Server do
     {clock, %{state | clock: clock}}
   end
 
-  defp clocks_out_of_sync(state, node, old_clock, clock) do
+  defp clocks_out_of_sync(state, _node, :ping, _clock, _node_ref, _remote_names) do
+    state
+  end
+
+  defp clocks_out_of_sync(state, node, old_clock, clock, node_ref, remote_names) do
     Logger.error(
       "Firenest.Topology.Erlang clock (value #{clock}) from node #{inspect(node)} " <>
         "got out of sync with clock (value #{old_clock}) stored in node " <>
@@ -455,7 +459,7 @@ defmodule Firenest.Topology.Erlang.Server do
     )
 
     ping(state, node)
-    state
+    put_in(state.nodes[node], {node, :ping, node_ref, remote_names})
   end
 
   defp persist_node_names(topology, nodes) do
