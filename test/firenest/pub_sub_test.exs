@@ -141,6 +141,13 @@ defmodule Firenest.PubSubTest do
     end
   end
 
+  test "Subscribing to topics that are tuples with complex terms", %{pubsub: pubsub} do
+    topic = {:game_world, 2, :user, "Nicholas Flamel", :inventory}
+    P.subscribe(pubsub, topic)
+    :ok = P.local_broadcast(pubsub, topic, :hello)
+    assert_received :hello
+  end
+
   describe "local_broadcast_from/4" do
     test "broadcasts messages to those listening", %{pubsub: pubsub, topic: topic} do
       :ok = task_local_broadcast_from(pubsub, topic, :hello)
