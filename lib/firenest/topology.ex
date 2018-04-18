@@ -6,7 +6,7 @@ defmodule Firenest.Topology do
 
     * How nodes are connected and discovered
     * How failures are handled (temporary and permanent)
-    * How messages are send across nodes
+    * How messages are sent across nodes
     * How messages are broadcast in the cluster
 
   The topology allows named processes running on other nodes
