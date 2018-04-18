@@ -33,7 +33,7 @@ defmodule Firenest.PubSub do
 
   @typedoc "An atom identifying the pubsub system."
   @type t :: atom()
-  @type topic :: binary()
+  @type topic :: term()
   @type from :: pid()
 
   defmodule BroadcastError do
@@ -97,7 +97,7 @@ defmodule Firenest.PubSub do
   safely ignore the `value` argument.
   """
   @spec subscribe(t, topic, term) :: :ok
-  def subscribe(pubsub, topic, value \\ nil) when is_atom(pubsub) and is_binary(topic) do
+  def subscribe(pubsub, topic, value \\ nil) when is_atom(pubsub) do
     {:ok, _} = Registry.register(pubsub, topic, value)
     :ok
   end
@@ -109,7 +109,7 @@ defmodule Firenest.PubSub do
   this call will unsubscribe all entries at once.
   """
   @spec unsubscribe(t, topic) :: :ok
-  def unsubscribe(pubsub, topic) when is_atom(pubsub) and is_binary(topic) do
+  def unsubscribe(pubsub, topic) when is_atom(pubsub) do
     Registry.unregister(pubsub, topic)
   end
 
@@ -207,10 +207,7 @@ defmodule Firenest.PubSub do
 
   defp dispatch(pubsub, from, topics, message, module, function) do
     mfa = {module, function, [from, message]}
-    Enum.each topics, fn
-      topic when is_binary(topic) -> Registry.dispatch(pubsub, topic, mfa)
-      topic -> raise ArgumentError, "topic must be a string, got: #{inspect topic}"
-    end
+    Enum.each(topics, &Registry.dispatch(pubsub, &1, mfa))
     :ok
   end
 end
