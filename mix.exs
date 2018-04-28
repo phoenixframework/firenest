@@ -31,6 +31,6 @@ defmodule Firenest.Mixfile do
   #
   # Type "mix help deps" for more examples and options
   defp deps do
-    []
+    [{:dialyxir, "~> 0.5", only: [:dev, :test], runtime: false}]
   end
 end
