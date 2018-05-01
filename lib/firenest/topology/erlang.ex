@@ -120,6 +120,7 @@ defmodule Firenest.Topology.Erlang.Server do
   end
 
   def init(topology) do
+    Process.flag(:trap_exit, true)
     # Setup the topology ets table contract.
     ^topology = :ets.new(topology, [:set, :public, :named_table, read_concurrency: true])
 
@@ -169,6 +170,7 @@ defmodule Firenest.Topology.Erlang.Server do
 
     case maybe_remove_dead_monitor(state, name) do
       {:ok, state} ->
+        Process.link(pid)
         ref = Process.monitor(name)
         state = put_in(state.monitors[ref], name)
         state = put_in(state.local_names[name], {pid, ref})
@@ -185,6 +187,11 @@ defmodule Firenest.Topology.Erlang.Server do
       {:error, existing_pid} ->
         {:reply, {:error, {:already_synced, existing_pid}}, state}
     end
+  end
+
+  def handle_info({:EXIT, _pid, _reason}, state) do
+    # ignore, we'll receive a DOWN for the process as well
+    {:noreply, state}
   end
 
   def handle_info({:DOWN, ref, _, pid, _}, state) when Kernel.node(pid) != Kernel.node() do

@@ -70,12 +70,42 @@ defmodule Firenest.Test do
   Starts a process given by module and args on the given nodes.
   """
   def start_link(nodes, mfa) when is_tuple(mfa) do
-    case :rpc.multicall(nodes, __MODULE__, :start_link, [mfa]) do
-      {_, []} -> :ok
-      {_, bad} -> raise "starting #{inspect(mfa)} in cluster failed on nodes #{inspect(bad)}"
+    multirpc(nodes, __MODULE__, :start_link, [mfa])
+  end
+
+  @doc """
+  Sets up current process as a reporter on the given nodes.
+
+  You can report messages back to the caller using `report/1` function.
+  """
+  def start_reporter(nodes) do
+    parent = self()
+
+    spawn_link(fn ->
+      Process.register(self(), __MODULE__.Reporter)
+      forward(parent)
+    end)
+
+    multirpc(nodes, :slave, :pseudo, [node(), [__MODULE__.Reporter]])
+  end
+
+  defp forward(parent) do
+    receive do
+      msg -> send(parent, msg)
     end
 
-    :ok
+    forward(parent)
+  end
+
+  @doc """
+  Sends a report back to the reporter process configured with `start_reporter/1`.
+  """
+  def report(msg) do
+    if pid = Process.whereis(__MODULE__.Reporter) do
+      send(pid, msg)
+    else
+      raise "reporter process not configured on current node"
+    end
   end
 
   @doc false
@@ -126,6 +156,13 @@ defmodule Firenest.Test do
 
   defp rpc(node, module, function, args) do
     :rpc.block_call(node, module, function, args)
+  end
+
+  defp multirpc(nodes, m, f, a) do
+    case :rpc.multicall(nodes, m, f, a) do
+      {_, []} -> :ok
+      {_, bad} -> raise "rpc #{inspect({m, f, a})} failed on nodes #{inspect(bad)}"
+    end
   end
 
   defp inet_loader_args do

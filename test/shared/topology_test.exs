@@ -139,6 +139,35 @@ defmodule Firenest.TopologyTest do
     end
 
     @node :"sync_named@127.0.0.1"
+    test "links to synced process", config do
+      %{topology: topology, evaluator: evaluator, test: test} = config
+
+      Firenest.Test.spawn_nodes([@node])
+      Firenest.Test.start_firenest([@node], adapter: T.adapter!(topology))
+      Firenest.Test.start_reporter([@node])
+
+      assert {:ok, []} = T.sync_named(topology, self())
+      start_sync_named_on(topology, @node, evaluator, test)
+      assert_receive {:named_up, @node, node_id, ^test}
+
+      cmd =
+        quote do
+          # Application.ensure_all_started(:sasl)
+          ref = Process.monitor(unquote(test))
+          Process.exit(Process.whereis(unquote(topology)), :kill)
+
+          receive do
+            {:DOWN, ^ref, _, _, _} ->
+              Firenest.Test.report(:down_success)
+          end
+        end
+
+      T.send(topology, @node, evaluator, {:eval_quoted, cmd})
+
+      assert_receive :down_success
+      assert_received {:named_down, @node, ^node_id, ^test}
+    end
+
     test "receives messages from nodes across the network", config do
       %{topology: topology, evaluator: evaluator, test: test} = config
 
