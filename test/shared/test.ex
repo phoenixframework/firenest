@@ -7,6 +7,8 @@ defmodule Firenest.Test do
   cluster setup.
   """
 
+  require Logger
+
   defmodule Evaluator do
     @moduledoc false
 
@@ -41,9 +43,10 @@ defmodule Firenest.Test do
         {:ok, ipv4} = :inet.parse_ipv4_address('127.0.0.1')
         :erl_boot_server.add_slave(ipv4)
         :ok
+
       {:error, _} ->
         raise "make sure epmd is running before starting the test suite. " <>
-              "Running `elixir --sname foo` or `epmd -daemon` once is usually enough."
+                "Running `elixir --sname foo` or `epmd -daemon` once is usually enough."
     end
   end
 
@@ -51,9 +54,7 @@ defmodule Firenest.Test do
   Spawns the given nodes.
   """
   def spawn_nodes(children) do
-    children
-    |> Enum.map(&Task.async(fn -> spawn_node(&1) end))
-    |> Enum.map(&Task.await(&1, 30_000))
+    Enum.map(children, &spawn_node/1)
   end
 
   @doc """
@@ -70,9 +71,10 @@ defmodule Firenest.Test do
   """
   def start_link(nodes, mfa) when is_tuple(mfa) do
     case :rpc.multicall(nodes, __MODULE__, :start_link, [mfa]) do
-      {_, []}  -> :ok
-      {_, bad} -> raise "starting #{inspect mfa} in cluster failed on nodes #{inspect bad}"
+      {_, []} -> :ok
+      {_, bad} -> raise "starting #{inspect(mfa)} in cluster failed on nodes #{inspect(bad)}"
     end
+
     :ok
   end
 
@@ -80,11 +82,12 @@ defmodule Firenest.Test do
   def start_link({module, function, args}) do
     parent = self()
 
-    {:ok, task} = Task.start_link(fn ->
-      apply(module, function, args)
-      send(parent, self())
-      Process.sleep(:infinity)
-    end)
+    {:ok, task} =
+      Task.start_link(fn ->
+        apply(module, function, args)
+        send(parent, self())
+        Process.sleep(:infinity)
+      end)
 
     receive do
       ^task -> :ok
@@ -92,12 +95,34 @@ defmodule Firenest.Test do
   end
 
   defp spawn_node(node_host) do
-    {:ok, node} = :slave.start('127.0.0.1', node_name(node_host), inet_loader_args())
+    token = start_deadline(30_000)
+    {:ok, node} = :slave.start_link('127.0.0.1', node_name(node_host), inet_loader_args())
     add_code_paths(node)
     transfer_configuration(node)
     ensure_applications_started(node)
+    cancel_deadline(token)
     {:ok, node}
   end
+
+  defp start_deadline(timeout) do
+    parent = self()
+    ref = make_ref()
+
+    pid =
+      spawn_link(fn ->
+        receive do
+          ^ref -> :ok
+        after
+          timeout ->
+            Logger.error("Deadline for starting slave node reached")
+            Process.exit(parent, :kill)
+        end
+      end)
+
+    {pid, ref}
+  end
+
+  defp cancel_deadline({pid, ref}), do: send(pid, ref)
 
   defp rpc(node, module, function, args) do
     :rpc.block_call(node, module, function, args)
@@ -112,7 +137,7 @@ defmodule Firenest.Test do
   end
 
   defp transfer_configuration(node) do
-    for {app_name, _, _} <- Application.loaded_applications do
+    for {app_name, _, _} <- Application.loaded_applications() do
       for {key, val} <- Application.get_all_env(app_name) do
         rpc(node, Application, :put_env, [app_name, key, val])
       end
@@ -122,7 +147,8 @@ defmodule Firenest.Test do
   defp ensure_applications_started(node) do
     rpc(node, Application, :ensure_all_started, [:mix])
     rpc(node, Mix, :env, [Mix.env()])
-    for {app_name, _, _} <- Application.loaded_applications do
+
+    for {app_name, _, _} <- Application.loaded_applications() do
       rpc(node, Application, :ensure_all_started, [app_name])
     end
   end
@@ -132,6 +158,6 @@ defmodule Firenest.Test do
     |> to_string
     |> String.split("@")
     |> Enum.at(0)
-    |> String.to_atom
+    |> String.to_atom()
   end
 end
