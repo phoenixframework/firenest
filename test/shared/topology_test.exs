@@ -21,8 +21,7 @@ defmodule Firenest.TopologyTest do
 
   describe "nodes/1" do
     test "returns all connected nodes except self", %{topology: topology} do
-      assert T.nodes(topology) |> Enum.sort ==
-             [:"second@127.0.0.1", :"third@127.0.0.1"]
+      assert T.nodes(topology) |> Enum.sort() == [:"second@127.0.0.1", :"third@127.0.0.1"]
     end
   end
 
@@ -32,9 +31,13 @@ defmodule Firenest.TopologyTest do
     test "messages name in the given node", config do
       %{topology: topology, evaluator: evaluator, test: test} = config
 
-      assert T.send(topology, :"third@127.0.0.1", evaluator, {:eval_quoted, quote do
-        T.send(unquote(topology), :"first@127.0.0.1", unquote(test), {:reply, T.node(unquote(topology))})
-      end}) == :ok
+      cmd =
+        quote do
+          reply = {:reply, T.node(unquote(topology))}
+          T.send(unquote(topology), :"first@127.0.0.1", unquote(test), reply)
+        end
+
+      assert T.send(topology, :"third@127.0.0.1", evaluator, {:eval_quoted, cmd}) == :ok
 
       assert_receive {:reply, :"third@127.0.0.1"}
       refute_received {:reply, :"second@127.0.0.1"}
@@ -44,9 +47,13 @@ defmodule Firenest.TopologyTest do
     test "messages name in the current node", config do
       %{topology: topology, evaluator: evaluator, test: test} = config
 
-      assert T.send(topology, :"first@127.0.0.1", evaluator, {:eval_quoted, quote do
-        T.send(unquote(topology), :"first@127.0.0.1", unquote(test), {:reply, T.node(unquote(topology))})
-      end}) == :ok
+      cmd =
+        quote do
+          reply = {:reply, T.node(unquote(topology))}
+          T.send(unquote(topology), :"first@127.0.0.1", unquote(test), reply)
+        end
+
+      assert T.send(topology, :"first@127.0.0.1", evaluator, {:eval_quoted, cmd}) == :ok
 
       assert_receive {:reply, :"first@127.0.0.1"}
       refute_received {:reply, :"second@127.0.0.1"}
@@ -55,8 +62,7 @@ defmodule Firenest.TopologyTest do
 
     test "returns error when messaging unknown node", config do
       %{topology: topology, evaluator: evaluator} = config
-      assert T.send(topology, :"unknown@127.0.0.1", evaluator, :oops) ==
-             {:error, :noconnection}
+      assert T.send(topology, :"unknown@127.0.0.1", evaluator, :oops) == {:error, :noconnection}
     end
   end
 
@@ -69,9 +75,12 @@ defmodule Firenest.TopologyTest do
       # We broadcast a message to the evaluator in all nodes
       # and then evaluate code that broadcasts a message back
       # to the test process.
-      T.broadcast(topology, evaluator, {:eval_quoted, quote do
-        T.broadcast(unquote(topology), unquote(test), {:reply, T.node(unquote(topology))})
-      end})
+      cmd =
+        quote do
+          T.broadcast(unquote(topology), unquote(test), {:reply, T.node(unquote(topology))})
+        end
+
+      T.broadcast(topology, evaluator, {:eval_quoted, cmd})
 
       assert_receive {:reply, :"third@127.0.0.1"}
       assert_receive {:reply, :"second@127.0.0.1"}
@@ -153,20 +162,23 @@ defmodule Firenest.TopologyTest do
       assert_receive {:named_down, @node, ^node_id, ^test}
 
       # And now let's kill the named process running on third
-      T.send(topology, :"third@127.0.0.1", evaluator, {:eval_quoted, quote do
-        Process.exit(Process.whereis(unquote(test)), :shutdown)
-      end})
+      cmd = quote(do: Process.exit(Process.whereis(unquote(test)), :shutdown))
+      T.send(topology, :"third@127.0.0.1", evaluator, {:eval_quoted, cmd})
+
       assert_receive {:named_down, :"third@127.0.0.1", ^third_id, ^test}
     end
 
     defp start_sync_named_on(topology, node, evaluator, name) do
-      T.send(topology, node, evaluator, {:eval_quoted, quote do
-        Task.start(fn ->
-          Process.register(self(), unquote(name))
-          T.sync_named(unquote(topology), self())
-          Process.sleep(:infinity)
-        end)
-      end})
+      cmd =
+        quote do
+          Task.start(fn ->
+            Process.register(self(), unquote(name))
+            T.sync_named(unquote(topology), self())
+            Process.sleep(:infinity)
+          end)
+        end
+
+      T.send(topology, node, evaluator, {:eval_quoted, cmd})
     end
 
     defp wait_until_at_least_one_sync_named(topology, name) do
