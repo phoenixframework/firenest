@@ -201,8 +201,9 @@ defmodule Firenest.Topology do
 
     * `{:named_up, node_ref, name}` is delivered whenever a process
       with name `name` is up on the node identified by `node_ref`.
-      The message is guaranteed to be delivered after the node is
-      added to the list returned by `nodes/2`.
+      The message is guaranteed to be delivered after the node is added
+      to the list returned by `nodes/2`. Note that you may receive
+      messages from node before you receive its named up event.
 
     * `{:named_down, node_ref, name}` is delivered whenever a process
       with name `name` is down on the node identified by `node_ref`.
@@ -218,6 +219,28 @@ defmodule Firenest.Topology do
   goes up and down many times during a network partition, those events
   won't be notified, only a `:named_down` event from the partition and
   a `:named_up` on reconnection.
+
+  ## Synchronous communication
+
+  When you receive a `named_up`, it means you can see `name` in a given
+  node, but it does not mean that process can see you. Therefore, if you want
+  to engage on synchronous communication with that process, you must expect
+  two messages, the `named_up` message and another message sent by the other
+  process that declares its can see you. In pseudo-code:
+
+      def handle_info({:named_up, node, name}, state) do
+        myself = Firenest.Topology.node(state.topology)
+        Firenest.Topology.send(state.topology, node, name, {:i_can_see_you, myself})
+        add_node_named_up(state, node)
+      end
+
+      def handle_info({:i_can_see_you, node}, state) do
+        add_node_i_can_see_you(state, node)
+      end
+
+  Only after you receive both `named_up` and `i_can_see_you` messages you
+  can be sure that you are able to communicate to that node and receive
+  messages back. Note those two messages may be delivered in any order.
   """
   @spec sync_named(t(), pid()) :: {:ok, [node_ref()]} | {:error, {:already_synced, pid()}}
   def sync_named(topology, pid) when is_pid(pid) do

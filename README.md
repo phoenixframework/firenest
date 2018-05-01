@@ -1,8 +1,10 @@
 # Firenest
 
-**Firenest is a framework for building distributed systems.**
+Firenest is a library of components for building distributed systems.
 
-It provides a swappable topology as well as a set of components:
+All components are built on top of a replaceable topology that abstracts
+operations:
+
   * `Firenest.Topology` - the core of Firenest which provides node
     discovery, failure handling, broadcast and message passing between
     nodes
