@@ -32,12 +32,12 @@ defmodule Firenest.Topology.Erlang do
 
   defdelegate child_spec(opts), to: Firenest.Topology.Erlang.Server
 
-  def connect(topology, node) when is_atom(node) do
+  def connect(topology, node) do
     fn ->
       ref = subscribe(topology, self())
 
-      case :net_kernel.connect(node) do
-        true -> node in nodes(topology) or wait_until({:nodeup, ref, node})
+      case :net_kernel.connect_node(node) do
+        true -> node_connected?(topology, node) or wait_until({:nodeup, ref, node})
         false -> false
         :ignored -> :ignored
       end
@@ -46,11 +46,11 @@ defmodule Firenest.Topology.Erlang do
     |> Task.await(:infinity)
   end
 
-  def disconnect(topology, node) when is_atom(node) do
+  def disconnect(topology, node) do
     fn ->
       ref = subscribe(topology, self())
 
-      case node in nodes(topology) and :net_kernel.disconnect(node) do
+      case node_connected?(topology, node) and :erlang.disconnect_node(node) do
         true -> wait_until({:nodedown, ref, node})
         false -> false
         :ignored -> :ignored
@@ -68,42 +68,55 @@ defmodule Firenest.Topology.Erlang do
     end
   end
 
-  def broadcast(topology, name, message) when is_atom(name) do
-    topology |> nodes() |> Enum.each(&Process.send({name, &1}, message, [:noconnect]))
+  def broadcast(topology, name, message) do
+    topology |> node_names() |> Enum.each(&Process.send({name, &1}, message, [:noconnect]))
   end
 
-  def send(topology, node, name, message) when is_atom(node) and is_atom(name) do
-    if node == Kernel.node() or node in nodes(topology) do
+  def send(topology, {node, _} = node_ref, name, message) do
+    if node == Kernel.node() or node_ref_connected?(topology, node_ref) do
       Process.send({name, node}, message, [:noconnect])
-      :ok
     else
       {:error, :noconnection}
     end
   end
 
-  def sync_named(topology, pid, timeout \\ @timeout) when is_pid(pid) do
+  def sync_named(topology, pid) do
     case Process.info(pid, :registered_name) do
       {:registered_name, []} ->
         raise ArgumentError,
               "cannot sync process #{inspect(pid)} because it hasn't been registered"
 
       {:registered_name, name} ->
-        GenServer.call(topology, {:sync_named, pid, name}, timeout)
+        GenServer.call(topology, {:sync_named, pid, name}, @timeout)
     end
   end
 
-  def node(_topology) do
-    Kernel.node()
+  def node(topology) do
+    :ets.lookup_element(topology, :node, 2)
   end
 
   def nodes(topology) do
     :ets.lookup_element(topology, :nodes, 2)
   end
 
+  defp node_names(topology) do
+    :ets.lookup_element(topology, :nodes, 3)
+  end
+
+  defp node_connected?(topology, node) do
+    ms = [{{{:connected, {node, :_}}, :"$1"}, [], [:"$1"]}]
+    :ets.select_count(topology, ms) == 1
+  end
+
+  defp node_ref_connected?(topology, node_ref) do
+    ms = [{{{:connected, node_ref}, :"$1"}, [], [:"$1"]}]
+    :ets.select_count(topology, ms) == 1
+  end
+
   # Subscribing to the topology events is private right now,
   # we can make it public if necessary but sync_named/3 should
   # be enough for all purposes.
-  defp subscribe(topology, pid) when is_pid(pid) do
+  defp subscribe(topology, pid) do
     GenServer.call(topology, {:subscribe, pid})
   end
 end
@@ -124,11 +137,11 @@ defmodule Firenest.Topology.Erlang.Server do
     # Setup the topology ets table contract.
     ^topology = :ets.new(topology, [:set, :public, :named_table, read_concurrency: true])
 
-    # Node names are also stored in an ETS table for fast lookups.
+    id = id()
+    # Some additional data is stored in the ETS table for fast lookups.
     # We need to do this before we write the adapter because once
     # the adapter is written the table is considered as ready.
-    persist_node_names(topology, %{})
-
+    true = :ets.insert(topology, [{:node, {Kernel.node(), id}}, {:nodes, [], []}])
     true = :ets.insert(topology, {:adapter, Firenest.Topology.Erlang})
 
     # We need to monitor nodes before we do the first broadcast.
@@ -143,7 +156,7 @@ defmodule Firenest.Topology.Erlang.Server do
     # in their pongs.
     state = %{
       clock: 0,
-      id: id(),
+      id: id,
       monitors: %{},
       nodes: %{},
       local_names: %{},
@@ -166,7 +179,7 @@ defmodule Firenest.Topology.Erlang.Server do
   # Receives the sync monitor command from a local process and broadcast
   # this monitor is up in all known instances of this topology.
   def handle_call({:sync_named, pid, name}, _from, state) do
-    %{topology: topology, id: id, nodes: nodes} = state
+    %{id: id, nodes: nodes} = state
 
     case maybe_remove_dead_monitor(state, name) do
       {:ok, state} ->
@@ -181,7 +194,7 @@ defmodule Firenest.Topology.Erlang.Server do
               do: {node, id}
 
         {clock, state} = bump_clock(state)
-        topology_broadcast(topology, {:monitor_up, Kernel.node(), id, clock, name, ref})
+        topology_broadcast(state, {:monitor_up, Kernel.node(), id, clock, name, ref})
         {:reply, {:ok, nodes}, state}
 
       {:error, existing_pid} ->
@@ -221,7 +234,7 @@ defmodule Firenest.Topology.Erlang.Server do
         # We know this node. The other node guarantees to deliver a monitor_down
         # before monitor_up for the same name, so we don't need to check this here.
         %{^node => {^id, old_clock, node_ref, remote_names}} when old_clock == clock - 1 ->
-          local_monitor_up(local_names, node, id, name)
+          local_monitor_up(local_names, {node, id}, name)
 
           put_in(
             state.nodes[node],
@@ -248,7 +261,7 @@ defmodule Firenest.Topology.Erlang.Server do
         # We know this node and therefore we must know this name-monitor pair.
         %{^node => {^id, old_clock, node_ref, remote_names}} when old_clock == clock - 1 ->
           ^monitor_ref = Map.fetch!(remote_names, name)
-          local_monitor_down(local_names, node, id, name)
+          local_monitor_down(local_names, {node, id}, name)
 
           put_in(
             state.nodes[node],
@@ -355,13 +368,14 @@ defmodule Firenest.Topology.Erlang.Server do
       end)
 
     %{local_names: local_names} = state
+    node_ref = {node, id}
 
     for {name, _ref} <- removed do
-      local_monitor_down(local_names, node, id, name)
+      local_monitor_down(local_names, node_ref, name)
     end
 
     for name <- added do
-      local_monitor_up(local_names, node, id, name)
+      local_monitor_up(local_names, node_ref, name)
     end
 
     :ok
@@ -377,10 +391,11 @@ defmodule Firenest.Topology.Erlang.Server do
 
     # Add the node, notify the node, notify the services.
     nodes = Map.put(nodes, node, {id, clock, Process.monitor(pid), remote_names})
-    persist_node_names(topology, nodes)
+    node_ref = {node, id}
+    persist_nodes_adding(topology, nodes, node_ref)
 
     _ = for {ref, pid} <- subscribers, do: send(pid, {:nodeup, ref, node})
-    _ = for {_, name} <- monitors, do: local_monitor_up(local_names, node, id, name)
+    _ = for {_, name} <- monitors, do: local_monitor_up(local_names, node_ref, name)
     %{state | nodes: nodes}
   end
 
@@ -393,22 +408,22 @@ defmodule Firenest.Topology.Erlang.Server do
     } = state
 
     # Notify the services, remove the node, notify the node.
-    {id, _clock, _ref, remote_names} = Map.fetch!(nodes, node)
-    _ = for {name, _} <- remote_names, do: local_monitor_down(local_names, node, id, name)
+    {{id, _clock, _ref, remote_names}, nodes} = Map.pop(nodes, node)
+    node_ref = {node, id}
+    _ = for {name, _} <- remote_names, do: local_monitor_down(local_names, node_ref, name)
 
-    nodes = Map.delete(nodes, node)
-    persist_node_names(topology, nodes)
+    persist_nodes_removing(topology, nodes, node_ref)
 
     _ = for {ref, pid} <- subscribers, do: send(pid, {:nodedown, ref, node})
     %{state | nodes: nodes}
   end
 
-  defp local_monitor_up(local_names, node, id, name) do
-    local_send(local_names, name, {:named_up, node, id, name})
+  defp local_monitor_up(local_names, node_ref, name) do
+    local_send(local_names, name, {:named_up, node_ref, name})
   end
 
-  defp local_monitor_down(local_names, node, id, name) do
-    local_send(local_names, name, {:named_down, node, id, name})
+  defp local_monitor_down(local_names, node_ref, name) do
+    local_send(local_names, name, {:named_down, node_ref, name})
   end
 
   # Sends a message to the process named `name` in the topology.
@@ -439,12 +454,12 @@ defmodule Firenest.Topology.Erlang.Server do
     end
   end
 
-  defp remove_dead_monitor(%{id: id, topology: topology} = state, ref) do
+  defp remove_dead_monitor(%{id: id} = state, ref) do
     {name, state} = pop_in(state.monitors[ref])
     {_, state} = pop_in(state.local_names[name])
 
     {clock, state} = bump_clock(state)
-    topology_broadcast(topology, {:monitor_down, Kernel.node(), id, clock, name, ref})
+    topology_broadcast(state, {:monitor_down, Kernel.node(), id, clock, name, ref})
 
     state
   end
@@ -469,13 +484,32 @@ defmodule Firenest.Topology.Erlang.Server do
     put_in(state.nodes[node], {node, :ping, node_ref, remote_names})
   end
 
-  defp persist_node_names(topology, nodes) do
-    true = :ets.insert(topology, {:nodes, nodes |> Map.keys() |> Enum.sort()})
+  defp persist_nodes_adding(topology, nodes, node_ref) do
+    {node_refs, node_names} = sort_node_names(nodes)
+    :ets.insert(topology, [{:nodes, node_refs, node_names}, {{:connected, node_ref}, true}])
   end
 
-  defp topology_broadcast(topology, message) do
-    topology
-    |> :ets.lookup_element(:nodes, 2)
-    |> Enum.each(&Process.send({topology, &1}, message, [:noconnect]))
+  defp persist_nodes_removing(topology, nodes, node_ref) do
+    {node_refs, node_names} = sort_node_names(nodes)
+    # We first update the entry to prevent inconsistencies between the nodes and connected
+    # entries in the ets table.
+    :ets.insert(topology, [{:nodes, node_refs, node_names}, {{:connected, node_ref}, false}])
+    :ets.delete(topology, {:connected, node_ref})
+  end
+
+  defp sort_node_names(nodes) do
+    nodes
+    |> Enum.sort()
+    |> Enum.reduce({[], []}, fn {name, {id, _, _, _}}, {node_refs, node_names} ->
+      {[{name, id} | node_refs], [name | node_names]}
+    end)
+  end
+
+  defp topology_broadcast(%{topology: topology, nodes: nodes}, message) do
+    for {node, _} <- nodes do
+      Process.send({topology, node}, message, [:noconnect])
+    end
+
+    :ok
   end
 end

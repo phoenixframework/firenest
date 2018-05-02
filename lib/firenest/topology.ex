@@ -22,10 +22,13 @@ defmodule Firenest.Topology do
   """
 
   @typedoc "An atom identifying the topology name."
-  @type t :: atom
+  @type t() :: atom()
 
   @typedoc "How named processes are identified by topology."
-  @type name :: atom
+  @type name() :: atom()
+
+  @typedoc "A unique identidier for a node in the topology."
+  @type node_ref() :: {name :: node(), id :: term()}
 
   @doc """
   Returns the child specification for a topology.
@@ -39,37 +42,37 @@ defmodule Firenest.Topology do
   @doc """
   Returns the name of the current node in `topology`.
   """
-  @callback node(t) :: node()
+  @callback node(t()) :: node_ref()
 
   @doc """
   Returns all other nodes in the `topology` (does not include the current node).
   """
-  @callback nodes(t) :: [node()]
+  @callback nodes(t()) :: [node_ref()]
 
   @doc """
   Broadcasts `message` to all processes named `name` on all other nodes in `topology`.
   """
-  @callback broadcast(t, name, message :: term) :: :ok | {:error, term}
+  @callback broadcast(t(), name(), message :: term()) :: :ok | {:error, term()}
 
   @doc """
   Sends a `message` to the process named `name` in `node` running on the `topology`.
   """
-  @callback send(t, node, name, message :: term) :: :ok | {:error, term}
+  @callback send(t(), node_ref(), name(), message :: term()) :: :ok | {:error, term()}
 
   @doc """
   Asks the topology to connect to the given node.
   """
-  @callback connect(t, node) :: true | false | :ignored
+  @callback connect(t(), node()) :: true | false | :ignore
 
   @doc """
   Asks the topology to disconnect from the given node.
   """
-  @callback disconnect(t, node) :: true | false | :ignored
+  @callback disconnect(t(), node()) :: true | false | :ignore
 
   @doc """
   Syncs the given `pid` across the topology using its name.
   """
-  @callback sync_named(t, pid) :: {:ok, [{node, id :: term}]} | {:error, {:already_synced, pid}}
+  @callback sync_named(t(), pid()) :: {:ok, [node_ref()]} | {:error, {:already_synced, pid}}
 
   @doc """
   Returns the child specification for a topology.
@@ -100,12 +103,11 @@ defmodule Firenest.Topology do
   Returns the name of the current node in `topology`.
 
       iex> Firenest.Topology.node(MyApp.Topology)
-      :foo@example
+      {:foo@example, _}
 
-  If the node is not connected to any other node, it may return
-  `:nonode@nohost`.
+  If the node is not connected to any other node, it may fail.
   """
-  @spec node(t) :: node()
+  @spec node(t()) :: node_ref()
   def node(topology) when is_atom(topology) do
     adapter!(topology).node(topology)
   end
@@ -114,10 +116,10 @@ defmodule Firenest.Topology do
   Returns all other nodes in the `topology` (does not include the current node).
 
       iex> Firenest.Topology.nodes(MyApp.Topology)
-      [:bar@example, :baz@example]
+      [{:bar@example, _}, {:baz@example, _}]
 
   """
-  @spec nodes(t) :: [node()]
+  @spec nodes(t()) :: [node_ref()]
   def nodes(topology) when is_atom(topology) do
     adapter!(topology).nodes(topology)
   end
@@ -130,13 +132,13 @@ defmodule Firenest.Topology do
 
   Returns `:ok` or `{:error, reason}`.
   """
-  @spec broadcast(t, name, message :: term) :: :ok | {:error, term}
+  @spec broadcast(t(), name(), message :: term()) :: :ok | {:error, term()}
   def broadcast(topology, name, message) when is_atom(topology) and is_atom(name) do
     adapter!(topology).broadcast(topology, name, message)
   end
 
-   @doc """
-  Sends `message` to processes named `name` in `node`.
+  @doc """
+  Sends `message` to processes named `name` in node identified by `node_ref`.
 
   Returns `:ok` or `{:error, reason}`. In particular,
   `{:error, :noconnection}` must be returned if the node
@@ -147,9 +149,10 @@ defmodule Firenest.Topology do
   `name` may have disconnected by the time we send (although we
   don't know it yet).
   """
-  @spec send(t, node, name, message :: term) :: :ok | {:error, term}
-  def send(topology, node, name, message) when is_atom(topology) and is_atom(node) and is_atom(name) do
-    adapter!(topology).send(topology, node, name, message)
+  @spec send(t(), node_ref(), name(), message :: term()) :: :ok | {:error, term()}
+  def send(topology, {node, _} = node_ref, name, message)
+      when is_atom(topology) and is_atom(node) and is_atom(name) do
+    adapter!(topology).send(topology, node_ref, name, message)
   end
 
   @doc """
@@ -159,7 +162,7 @@ defmodule Firenest.Topology do
   connected), `false` in case of failure and `:ignored` if the node
   is not online or if the operation is not supported.
   """
-  @spec connect(t, node) :: true | false | :ignored
+  @spec connect(t(), node()) :: true | false | :ignored
   def connect(topology, node) when is_atom(topology) and is_atom(node) do
     adapter!(topology).connect(topology, node)
   end
@@ -172,7 +175,7 @@ defmodule Firenest.Topology do
   the first place. It returns `:ignored` if the node is not online
   or if the operation is not supported.
   """
-  @spec disconnect(t, node) :: true | false | :ignored
+  @spec disconnect(t(), node()) :: true | false | :ignored
   def disconnect(topology, node) when is_atom(topology) and is_atom(node) do
     adapter!(topology).disconnect(topology, node)
   end
@@ -185,9 +188,9 @@ defmodule Firenest.Topology do
   another process with the same name goes up or down in the topology
   as long as processes call `sync_named/2`.
 
-  This function returns `{:ok, nodes}` in case the given pid has not
+  This function returns `{:ok, node_refs}` in case the given pid has not
   been synced yet, `{:error, {:already_synced, pid}}` otherwise.
-  `nodes` is a list of tuples with the first element with the node
+  `node_refs` is a list of tuples with the first element with the node
   name as an atom and the second element is a term used to version
   that node name. Only the nodes that are known to have a service
   with the same `name` running and that have already called `sync_named/2`
@@ -196,18 +199,18 @@ defmodule Firenest.Topology do
   Once this function is called, the given process `pid` will receive
   two messages with the following guarantees:
 
-    * `{:named_up, node, id, name}` is delivered whenever a process
-      with name `name` is up on the given `node-id` pair. The message
-      is guaranteed to be delivered after the node is added to the list
-      returned by `nodes/2`.
+    * `{:named_up, node_ref, name}` is delivered whenever a process
+      with name `name` is up on the node identified by `node_ref`.
+      The message is guaranteed to be delivered after the node is
+      added to the list returned by `nodes/2`.
 
-  * `{:named_down, node, id, name}` is delivered whenever a process
-      with name `name` is down on the given `node-id` pair. It can be
-      deivered when such processes crashes or when there is a disconnection.
-      The message is guaranteed to be delivered after the node is removed
-      from the list returned by `nodes/2`. Note the topology may not
-      necessarily guarantee that no messages are received from `name`
-      after this message is sent.
+    * `{:named_down, node_ref, name}` is delivered whenever a process
+      with name `name` is down on the node identified by `node_ref`.
+      It can be deivered when such processes crashes or when there is
+      a disconnection. The message is guaranteed to be delivered after
+      the node is removed from the list returned by `nodes/2`. Note
+      the topology may not necessarily guarantee that no messages
+      are received from `name` after this message is sent.
 
   If the connection to a node is lost, perhaps due to a network partition
   or crash, and then reestablished, a `:named_down` for that node is
@@ -216,7 +219,7 @@ defmodule Firenest.Topology do
   won't be notified, only a `:named_down` event from the partition and
   a `:named_up` on reconnection.
   """
-  @spec sync_named(t, pid) :: {:ok, [{node, id :: term}]} | {:error, {:already_synced, pid}}
+  @spec sync_named(t(), pid()) :: {:ok, [node_ref()]} | {:error, {:already_synced, pid()}}
   def sync_named(topology, pid) when is_pid(pid) do
     adapter!(topology).sync_named(topology, pid)
   end
@@ -230,7 +233,7 @@ defmodule Firenest.Topology do
     try do
       :ets.lookup_element(name, :adapter, 2)
     catch
-      :error, :badarg -> raise "could not find topology named #{inspect name}"
+      :error, :badarg -> raise "could not find topology named #{inspect(name)}"
     end
   end
 end
