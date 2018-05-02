@@ -1,7 +1,13 @@
 # Firenest
 
-**TODO: Add description**
+**Firenest is a framework for building distributed systems.**
 
+It provides a swappable topology as well as a set of components:
+  * `Firenest.Topology` - the core of Firenest which provides node
+    discovery, failure handling, broadcast and message passing between
+    nodes
+  * `Firenest.PubSub` - a distributed and scalable PubSub implementation
+  
 ## Installation
 
 If [available in Hex](https://hex.pm/docs/publish), the package can be installed as:
