@@ -64,6 +64,7 @@ defmodule Firenest.Test do
     %{start: start} = Firenest.Topology.child_spec([name: Firenest.Test] ++ options)
     start_link(nodes, start)
     start_link(nodes, {Evaluator, :start_link, []})
+    multirpc(nodes, Firenest.Topology, :node, [Firenest.Test])
   end
 
   @doc """
@@ -71,6 +72,7 @@ defmodule Firenest.Test do
   """
   def start_link(nodes, mfa) when is_tuple(mfa) do
     multirpc(nodes, __MODULE__, :start_link, [mfa])
+    :ok
   end
 
   @doc """
@@ -87,6 +89,7 @@ defmodule Firenest.Test do
     end)
 
     multirpc(nodes, :slave, :pseudo, [node(), [__MODULE__.Reporter]])
+    :ok
   end
 
   defp forward(parent) do
@@ -125,16 +128,16 @@ defmodule Firenest.Test do
   end
 
   defp spawn_node(node_host) do
-    token = start_deadline(30_000)
-    {:ok, node} = :slave.start_link('127.0.0.1', node_name(node_host), inet_loader_args())
-    add_code_paths(node)
-    transfer_configuration(node)
-    ensure_applications_started(node)
-    cancel_deadline(token)
-    {:ok, node}
+    with_deadline(30_000, fn ->
+      {:ok, node} = :slave.start_link('127.0.0.1', node_name(node_host), inet_loader_args())
+      add_code_paths(node)
+      transfer_configuration(node)
+      ensure_applications_started(node)
+      {:ok, node}
+    end)
   end
 
-  defp start_deadline(timeout) do
+  defp with_deadline(timeout, fun) do
     parent = self()
     ref = make_ref()
 
@@ -149,10 +152,12 @@ defmodule Firenest.Test do
         end
       end)
 
-    {pid, ref}
+    try do
+      fun.()
+    after
+      send(pid, ref)
+    end
   end
-
-  defp cancel_deadline({pid, ref}), do: send(pid, ref)
 
   defp rpc(node, module, function, args) do
     :rpc.block_call(node, module, function, args)
@@ -160,7 +165,7 @@ defmodule Firenest.Test do
 
   defp multirpc(nodes, m, f, a) do
     case :rpc.multicall(nodes, m, f, a) do
-      {_, []} -> :ok
+      {results, []} -> results
       {_, bad} -> raise "rpc #{inspect({m, f, a})} failed on nodes #{inspect(bad)}"
     end
   end

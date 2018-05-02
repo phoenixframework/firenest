@@ -7,21 +7,31 @@ defmodule Firenest.TopologyTest do
   use ExUnit.Case
   alias Firenest.Topology, as: T
 
+  setup_all do
+    topology = Firenest.Test
+
+    {:ok,
+     topology: topology,
+     evaluator: Firenest.Test.Evaluator,
+     node: T.node(topology),
+     nodes: T.nodes(topology)}
+  end
+
   setup %{test: test} do
     # Register the current process to receive topology messages.
     Process.register(self(), test)
-    {:ok, topology: Firenest.Test, evaluator: Firenest.Test.Evaluator}
+    :ok
   end
 
   describe "node/1" do
     test "returns the current node name", %{topology: topology} do
-      assert T.node(topology) == :"first@127.0.0.1"
+      assert {:"first@127.0.0.1", _} = T.node(topology)
     end
   end
 
   describe "nodes/1" do
     test "returns all connected nodes except self", %{topology: topology} do
-      assert T.nodes(topology) |> Enum.sort() == [:"second@127.0.0.1", :"third@127.0.0.1"]
+      assert ["second@127.0.0.1": _, "third@127.0.0.1": _] = Enum.sort(T.nodes(topology))
     end
   end
 
@@ -29,40 +39,48 @@ defmodule Firenest.TopologyTest do
     @describetag :broadcast
 
     test "messages name in the given node", config do
-      %{topology: topology, evaluator: evaluator, test: test} = config
+      %{topology: topology, evaluator: evaluator, test: test, node: first, nodes: [second, third]} =
+        config
 
       cmd =
         quote do
           reply = {:reply, T.node(unquote(topology))}
-          T.send(unquote(topology), :"first@127.0.0.1", unquote(test), reply)
+          T.send(unquote(topology), unquote(first), unquote(test), reply)
         end
 
-      assert T.send(topology, :"third@127.0.0.1", evaluator, {:eval_quoted, cmd}) == :ok
+      assert T.send(topology, third, evaluator, {:eval_quoted, cmd}) == :ok
 
-      assert_receive {:reply, :"third@127.0.0.1"}
-      refute_received {:reply, :"second@127.0.0.1"}
-      refute_received {:reply, :"first@127.0.0.1"}
+      assert_receive {:reply, ^third}
+      refute_received {:reply, ^second}
+      refute_received {:reply, ^first}
     end
 
     test "messages name in the current node", config do
-      %{topology: topology, evaluator: evaluator, test: test} = config
+      %{topology: topology, evaluator: evaluator, test: test, node: first, nodes: [second, third]} =
+        config
 
       cmd =
         quote do
           reply = {:reply, T.node(unquote(topology))}
-          T.send(unquote(topology), :"first@127.0.0.1", unquote(test), reply)
+          T.send(unquote(topology), unquote(first), unquote(test), reply)
         end
 
-      assert T.send(topology, :"first@127.0.0.1", evaluator, {:eval_quoted, cmd}) == :ok
+      assert T.send(topology, first, evaluator, {:eval_quoted, cmd}) == :ok
 
-      assert_receive {:reply, :"first@127.0.0.1"}
-      refute_received {:reply, :"second@127.0.0.1"}
-      refute_received {:reply, :"third@127.0.0.1"}
+      assert_receive {:reply, ^first}
+      refute_received {:reply, ^second}
+      refute_received {:reply, ^third}
     end
 
     test "returns error when messaging unknown node", config do
       %{topology: topology, evaluator: evaluator} = config
-      assert T.send(topology, :"unknown@127.0.0.1", evaluator, :oops) == {:error, :noconnection}
+      node_ref = {:"unknown@127.0.0.1", 1}
+      assert T.send(topology, node_ref, evaluator, :oops) == {:error, :noconnection}
+    end
+
+    test "returns error when messaging node with old ref", config do
+      %{topology: topology, evaluator: evaluator, nodes: [{name, _ref} | _]} = config
+      assert T.send(topology, {name, make_ref()}, evaluator, :oops) == {:error, :noconnection}
     end
   end
 
@@ -70,7 +88,8 @@ defmodule Firenest.TopologyTest do
     @describetag :broadcast
 
     test "messages name in all known nodes except self", config do
-      %{topology: topology, evaluator: evaluator, test: test} = config
+      %{topology: topology, evaluator: evaluator, test: test, node: first, nodes: [second, third]} =
+        config
 
       # We broadcast a message to the evaluator in all nodes
       # and then evaluate code that broadcasts a message back
@@ -82,9 +101,9 @@ defmodule Firenest.TopologyTest do
 
       T.broadcast(topology, evaluator, {:eval_quoted, cmd})
 
-      assert_receive {:reply, :"third@127.0.0.1"}
-      assert_receive {:reply, :"second@127.0.0.1"}
-      refute_received {:reply, :"first@127.0.0.1"}
+      assert_receive {:reply, ^second}
+      assert_receive {:reply, ^third}
+      refute_received {:reply, ^first}
     end
   end
 
@@ -95,23 +114,23 @@ defmodule Firenest.TopologyTest do
     test "may be set and managed explicitly", %{topology: topology} do
       # No node yet
       refute T.disconnect(topology, @node)
-      refute @node in T.nodes(topology)
+      refute @node in Keyword.keys(T.nodes(topology))
 
       # Start the node but not firenest
       Firenest.Test.spawn_nodes([@node])
-      refute @node in T.nodes(topology)
+      refute @node in Keyword.keys(T.nodes(topology))
 
       # Finally start firenest
       Firenest.Test.start_firenest([@node], adapter: T.adapter!(topology))
       assert T.connect(topology, @node)
-      assert @node in T.nodes(topology)
+      assert @node in Keyword.keys(T.nodes(topology))
 
       # Connect should still return true
       assert T.connect(topology, @node)
 
       # Now let's diconnect
       assert T.disconnect(topology, @node)
-      refute @node in T.nodes(topology)
+      refute @node in Keyword.keys(T.nodes(topology))
 
       # And we can't connect it back because it is permanently down
       refute T.connect(topology, @node)
@@ -143,12 +162,12 @@ defmodule Firenest.TopologyTest do
       %{topology: topology, evaluator: evaluator, test: test} = config
 
       Firenest.Test.spawn_nodes([@node])
-      Firenest.Test.start_firenest([@node], adapter: T.adapter!(topology))
+      [node_ref] = Firenest.Test.start_firenest([@node], adapter: T.adapter!(topology))
       Firenest.Test.start_reporter([@node])
 
       assert {:ok, []} = T.sync_named(topology, self())
-      start_sync_named_on(topology, @node, evaluator, test)
-      assert_receive {:named_up, @node, node_id, ^test}
+      start_sync_named_on(topology, node_ref, evaluator, test)
+      assert_receive {:named_up, ^node_ref, ^test}
 
       cmd =
         quote do
@@ -162,39 +181,39 @@ defmodule Firenest.TopologyTest do
           end
         end
 
-      T.send(topology, @node, evaluator, {:eval_quoted, cmd})
+      T.send(topology, node_ref, evaluator, {:eval_quoted, cmd})
 
       assert_receive :down_success
-      assert_received {:named_down, @node, ^node_id, ^test}
+      assert_receive {:named_down, ^node_ref, ^test}
     end
 
     test "receives messages from nodes across the network", config do
-      %{topology: topology, evaluator: evaluator, test: test} = config
+      %{topology: topology, evaluator: evaluator, test: test, nodes: [second, third]} = config
 
       # We start sync named and make sure it is up
-      start_sync_named_on(topology, :"second@127.0.0.1", evaluator, test)
+      start_sync_named_on(topology, second, evaluator, test)
       wait_until_at_least_one_sync_named(topology, test)
-      assert {:ok, [{:"second@127.0.0.1", _second_id}]} = T.sync_named(topology, self())
+      assert {:ok, [^second]} = T.sync_named(topology, self())
 
       # Make another node sync when we are already synced
-      start_sync_named_on(topology, :"third@127.0.0.1", evaluator, test)
-      assert_receive {:named_up, :"third@127.0.0.1", third_id, ^test}
+      start_sync_named_on(topology, third, evaluator, test)
+      assert_receive {:named_up, ^third, ^test}
 
       # Let's bring yet another node up
       Firenest.Test.spawn_nodes([@node])
-      Firenest.Test.start_firenest([@node], adapter: T.adapter!(topology))
-      start_sync_named_on(topology, @node, evaluator, test)
-      assert_receive {:named_up, @node, node_id, ^test}
+      [node_ref] = Firenest.Test.start_firenest([@node], adapter: T.adapter!(topology))
+      start_sync_named_on(topology, node_ref, evaluator, test)
+      assert_receive {:named_up, ^node_ref, ^test}
 
       # And now let's disconnect from it
       assert T.disconnect(topology, @node)
-      assert_receive {:named_down, @node, ^node_id, ^test}
+      assert_receive {:named_down, ^node_ref, ^test}
 
       # And now let's kill the named process running on third
       cmd = quote(do: Process.exit(Process.whereis(unquote(test)), :shutdown))
-      T.send(topology, :"third@127.0.0.1", evaluator, {:eval_quoted, cmd})
+      T.send(topology, third, evaluator, {:eval_quoted, cmd})
 
-      assert_receive {:named_down, :"third@127.0.0.1", ^third_id, ^test}
+      assert_receive {:named_down, ^third, ^test}
     end
 
     defp start_sync_named_on(topology, node, evaluator, name) do
@@ -202,7 +221,7 @@ defmodule Firenest.TopologyTest do
         quote do
           Task.start(fn ->
             Process.register(self(), unquote(name))
-            T.sync_named(unquote(topology), self())
+            res = T.sync_named(unquote(topology), self())
             Process.sleep(:infinity)
           end)
         end

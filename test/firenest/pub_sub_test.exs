@@ -9,7 +9,8 @@ defmodule Firenest.PubSubTest do
     pubsub = Firenest.Test.PubSub
     %{start: start} = P.child_spec(name: pubsub, topology: Firenest.Test)
     Firenest.Test.start_link(nodes, start)
-    {:ok, topology: Firenest.Test, evaluator: Firenest.Test.Evaluator, pubsub: pubsub}
+    nodes = for {name, _} = ref <- T.nodes(Firenest.Test), name in nodes, do: ref
+    {:ok, topology: Firenest.Test, evaluator: Firenest.Test.Evaluator, pubsub: pubsub, nodes: nodes}
   end
 
   setup %{pubsub: pubsub, test: test} do
@@ -58,7 +59,7 @@ defmodule Firenest.PubSubTest do
     end
 
     test "is distributed", config do
-      %{topology: topology, evaluator: evaluator, pubsub: pubsub, topic: topic} = config
+      %{topology: topology, evaluator: evaluator, pubsub: pubsub, topic: topic, nodes: [second]} = config
 
       T.broadcast(topology, evaluator, {:eval_quoted, quote do
         if Process.whereis(unquote(pubsub)) do
@@ -66,7 +67,7 @@ defmodule Firenest.PubSubTest do
         end
       end})
 
-      assert_receive {:reply, :"second@127.0.0.1"}
+      assert_receive {:reply, ^second}
     end
   end
 
@@ -95,7 +96,7 @@ defmodule Firenest.PubSubTest do
     end
 
     test "is distributed", config do
-      %{topology: topology, evaluator: evaluator, pubsub: pubsub, topic: topic} = config
+      %{topology: topology, evaluator: evaluator, pubsub: pubsub, topic: topic, nodes: [second]} = config
 
       T.broadcast(topology, evaluator, {:eval_quoted, quote do
         if Process.whereis(unquote(pubsub)) do
@@ -103,7 +104,7 @@ defmodule Firenest.PubSubTest do
         end
       end})
 
-      assert_receive {:reply, :"second@127.0.0.1"}
+      assert_receive {:reply, ^second}
     end
   end
 
