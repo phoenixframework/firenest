@@ -4,7 +4,10 @@ defmodule Firenest.PubSubTest do
   alias Firenest.PubSub, as: P
   alias Firenest.Topology, as: T
 
+  import Firenest.TestHelpers
+
   setup_all do
+    wait_until(fn -> Process.whereis(:firenest_topology_setup) == nil end)
     nodes = [:"first@127.0.0.1", :"second@127.0.0.1"]
     pubsub = Firenest.Test.PubSub
     %{start: start} = P.child_spec(name: pubsub, topology: Firenest.Test)

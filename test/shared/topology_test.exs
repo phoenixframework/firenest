@@ -7,7 +7,10 @@ defmodule Firenest.TopologyTest do
   use ExUnit.Case
   alias Firenest.Topology, as: T
 
+  import Firenest.TestHelpers
+
   setup_all do
+    wait_until(fn -> Process.whereis(:firenest_topology_setup) == nil end)
     topology = Firenest.Test
 
     {:ok,
@@ -242,20 +245,6 @@ defmodule Firenest.TopologyTest do
       end)
 
       Process.register(self(), name)
-    end
-  end
-
-  defp wait_until(fun, count \\ 1000) do
-    cond do
-      count == 0 ->
-        raise "waited until fun returned true but it never did"
-
-      fun.() ->
-        :ok
-
-      true ->
-        Process.sleep(10)
-        wait_until(fun, count - 1)
     end
   end
 end
