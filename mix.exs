@@ -13,7 +13,7 @@ defmodule Firenest.Mixfile do
     ]
   end
 
-  defp elixirc_paths(:test), do: ["lib", "test/shared"]
+  defp elixirc_paths(:test), do: ["lib", "test/shared", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
   # Configuration for the OTP application

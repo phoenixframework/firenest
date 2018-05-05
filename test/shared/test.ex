@@ -72,7 +72,6 @@ defmodule Firenest.Test do
   """
   def start_link(nodes, mfa) when is_tuple(mfa) do
     multirpc(nodes, __MODULE__, :start_link, [mfa])
-    :ok
   end
 
   @doc """
