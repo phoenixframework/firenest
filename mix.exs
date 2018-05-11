@@ -9,6 +9,7 @@ defmodule Firenest.Mixfile do
       build_embedded: Mix.env() == :prod,
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
+      dialyzer: [ignore_warnings: "dialyzer.ignore"],
       deps: deps()
     ]
   end

@@ -415,7 +415,7 @@ defmodule Firenest.SyncedServer do
               {_, name} -> name
             end
 
-          pattern = "Undefined handle_info/2 in ~p, process ~p received unexpected message: ~p~n"
+          pattern = 'Undefined handle_info/2 in ~p, process ~p received unexpected message: ~p~n'
           :error_logger.warning_msg(pattern, [mod, proc, hd(args)])
           {:noreply, int}
         end

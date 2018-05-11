@@ -1,0 +1,4 @@
+# bad typespec in Registry.dispatch/4
+lib/firenest/pub_sub.ex:214: The call 'Elixir.Registry':dispatch(_pubsub@1::atom(),__@1::any(),_mfa@1::{_,_,[any(),...]}) will never return since it differs in the 3rd argument from the success typing arguments: (atom(),any(),fun(([{pid(),_}]) -> any()))
+lib/firenest/pub_sub.ex:245: The created fun has no local return
+lib/firenest/pub_sub.ex:246: The call 'Elixir.Registry':dispatch(_pubsub@1::any(),_topic@1::any(),{_,_,[any(),...]}) will never return since it differs in the 3rd argument from the success typing arguments: (atom(),any(),fun(([{pid(),_}]) -> any()))

@@ -155,7 +155,7 @@ defmodule Firenest.PubSub do
   Returns `:ok` or `{:error, reason}` in case of failures in
   the distributed brodcast.
   """
-  @spec broadcast_from(t, pid, topic | [topic], term) :: :ok
+  @spec broadcast_from(t, pid, topic | [topic], term) :: :ok | {:error, term()}
   def broadcast_from(pubsub, pid, topic, message) when is_atom(pubsub) and is_pid(pid) do
     topics = List.wrap(topic)
     {:ok, {topology, dispatcher, module, function}} = Registry.meta(pubsub, :pubsub)
