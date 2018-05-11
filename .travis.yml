@@ -17,3 +17,4 @@ before_script:
   - MIX_ENV=test mix compile
 script:
   - mix test
+  - if mix help | grep -c 'mix format' &> /dev/null; then mix format --check-formatted; fi

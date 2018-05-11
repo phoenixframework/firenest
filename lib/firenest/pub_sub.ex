@@ -63,11 +63,13 @@ defmodule Firenest.PubSub do
       message to broadcast
 
   """
-  @spec child_spec(options) :: Supervisor.child_spec when
-        options: [name: t,
-                  topology: Firenest.Topology.t,
-                  partitions: pos_integer(),
-                  dispatcher: {module, function}]
+  @spec child_spec(options) :: Supervisor.child_spec()
+        when options: [
+               name: t,
+               topology: Firenest.Topology.t(),
+               partitions: pos_integer(),
+               dispatcher: {module, function}
+             ]
   defdelegate child_spec(options), to: Firenest.PubSub.Supervisor
 
   @doc """
@@ -123,6 +125,7 @@ defmodule Firenest.PubSub do
   def broadcast(pubsub, topic, message) when is_atom(pubsub) do
     topics = List.wrap(topic)
     {:ok, {topology, dispatcher, module, function}} = Registry.meta(pubsub, :pubsub)
+
     with :ok <- Firenest.Topology.broadcast(topology, dispatcher, {:broadcast, topics, message}) do
       dispatch(pubsub, :none, topics, message, module, function)
     end
@@ -138,7 +141,7 @@ defmodule Firenest.PubSub do
   def broadcast!(pubsub, topic, message) do
     case broadcast(pubsub, topic, message) do
       :ok -> :ok
-      {:error, error} -> raise BroadcastError, "broadcast!/3 failed with #{inspect error}"
+      {:error, error} -> raise BroadcastError, "broadcast!/3 failed with #{inspect(error)}"
     end
   end
 
@@ -156,6 +159,7 @@ defmodule Firenest.PubSub do
   def broadcast_from(pubsub, pid, topic, message) when is_atom(pubsub) and is_pid(pid) do
     topics = List.wrap(topic)
     {:ok, {topology, dispatcher, module, function}} = Registry.meta(pubsub, :pubsub)
+
     with :ok <- Firenest.Topology.broadcast(topology, dispatcher, {:broadcast, topics, message}) do
       dispatch(pubsub, pid, topics, message, module, function)
     end
@@ -175,7 +179,7 @@ defmodule Firenest.PubSub do
   def broadcast_from!(pubsub, pid, topic, message) do
     case broadcast_from(pubsub, pid, topic, message) do
       :ok -> :ok
-      {:error, error} -> raise BroadcastError, "broadcast_from!/4 failed with #{inspect error}"
+      {:error, error} -> raise BroadcastError, "broadcast_from!/4 failed with #{inspect(error)}"
     end
   end
 
@@ -218,12 +222,13 @@ defmodule Firenest.PubSub.Dispatcher do
   use GenServer
 
   def dispatch(entries, from, message) do
-    Enum.each entries, fn
+    Enum.each(entries, fn
       {pid, _} when pid == from ->
         :ok
+
       {pid, _} ->
         send(pid, message)
-    end
+    end)
   end
 
   def start_link({name, pubsub, module, function}) do
@@ -256,7 +261,7 @@ defmodule Firenest.PubSub.Supervisor do
 
     unless pubsub && topology do
       raise ArgumentError,
-        "Firenest.PubSub.child_spec/1 expects :name and :topology as options"
+            "Firenest.PubSub.child_spec/1 expects :name and :topology as options"
     end
 
     supervisor = Module.concat(pubsub, "Supervisor")
@@ -264,15 +269,19 @@ defmodule Firenest.PubSub.Supervisor do
   end
 
   def init({pubsub, topology, options}) do
-    partitions = options[:partitions] ||
-                 (System.schedulers_online |> Kernel./(4) |> Float.ceil() |> trunc())
+    partitions =
+      options[:partitions] || System.schedulers_online() |> Kernel./(4) |> Float.ceil() |> trunc()
+
     {module, function} = options[:dispatcher] || {Firenest.PubSub.Dispatcher, :dispatch}
 
     dispatcher = Module.concat(pubsub, "Dispatcher")
-    registry = [meta: [pubsub: {topology, dispatcher, module, function}],
-                partitions: partitions,
-                keys: :duplicate,
-                name: pubsub]
+
+    registry = [
+      meta: [pubsub: {topology, dispatcher, module, function}],
+      partitions: partitions,
+      keys: :duplicate,
+      name: pubsub
+    ]
 
     children = [
       {Registry, registry},

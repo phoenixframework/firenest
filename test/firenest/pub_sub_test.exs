@@ -10,10 +10,12 @@ defmodule Firenest.PubSubTest do
     wait_until(fn -> Process.whereis(:firenest_topology_setup) == nil end)
     nodes = [:"first@127.0.0.1", :"second@127.0.0.1"]
     pubsub = Firenest.Test.PubSub
-    %{start: start} = P.child_spec(name: pubsub, topology: Firenest.Test)
+    topology = Firenest.Test
+    %{start: start} = P.child_spec(name: pubsub, topology: topology)
     Firenest.Test.start_link(nodes, start)
-    nodes = for {name, _} = ref <- T.nodes(Firenest.Test), name in nodes, do: ref
-    {:ok, topology: Firenest.Test, evaluator: Firenest.Test.Evaluator, pubsub: pubsub, nodes: nodes}
+    nodes = for {name, _} = ref <- T.nodes(topology), name in nodes, do: ref
+
+    {:ok, topology: topology, evaluator: Firenest.Test.Evaluator, pubsub: pubsub, nodes: nodes}
   end
 
   setup %{pubsub: pubsub, test: test} do
@@ -62,13 +64,17 @@ defmodule Firenest.PubSubTest do
     end
 
     test "is distributed", config do
-      %{topology: topology, evaluator: evaluator, pubsub: pubsub, topic: topic, nodes: [second]} = config
+      %{topology: topology, evaluator: evaluator, pubsub: pubsub, topic: topic, nodes: [second]} =
+        config
 
-      T.broadcast(topology, evaluator, {:eval_quoted, quote do
-        if Process.whereis(unquote(pubsub)) do
-          P.broadcast(unquote(pubsub), unquote(topic), {:reply, T.node(unquote(topology))})
+      cmd =
+        quote do
+          if Process.whereis(unquote(pubsub)) do
+            P.broadcast(unquote(pubsub), unquote(topic), {:reply, T.node(unquote(topology))})
+          end
         end
-      end})
+
+      T.broadcast(topology, evaluator, {:eval_quoted, cmd})
 
       assert_receive {:reply, ^second}
     end
@@ -99,13 +105,22 @@ defmodule Firenest.PubSubTest do
     end
 
     test "is distributed", config do
-      %{topology: topology, evaluator: evaluator, pubsub: pubsub, topic: topic, nodes: [second]} = config
+      %{topology: topology, evaluator: evaluator, pubsub: pubsub, topic: topic, nodes: [second]} =
+        config
 
-      T.broadcast(topology, evaluator, {:eval_quoted, quote do
-        if Process.whereis(unquote(pubsub)) do
-          P.broadcast_from(unquote(pubsub), self(), unquote(topic), {:reply, T.node(unquote(topology))})
+      cmd =
+        quote do
+          if Process.whereis(unquote(pubsub)) do
+            P.broadcast_from(
+              unquote(pubsub),
+              self(),
+              unquote(topic),
+              {:reply, T.node(unquote(topology))}
+            )
+          end
         end
-      end})
+
+      T.broadcast(topology, evaluator, {:eval_quoted, cmd})
 
       assert_receive {:reply, ^second}
     end
@@ -199,15 +214,17 @@ defmodule Firenest.PubSubTest do
   describe "child_spec/1" do
     test "supports and validates :partitions option", %{topology: topology} do
       Process.flag(:trap_exit, true)
-      {:error, _} = start_supervised({P, name: :pubsub_with_partitions,
-                                 topology: topology, partitions: 0})
+
+      opts = [name: :pubsub_with_partitions, topology: topology, partitions: 0]
+      {:error, _} = start_supervised({P, opts})
     end
 
-    test "supports custom dispatching", %{topology: topology, topic: topic} do
-      {:ok, _} = start_supervised({P, name: :pubsub_with_dispatching,
-                         topology: topology, dispatcher: {__MODULE__, :custom_dispatcher}})
-      P.subscribe(:pubsub_with_dispatching, topic, :register)
-      P.broadcast_from(:pubsub_with_dispatching, self(), topic, :message)
+    test "supports custom dispatching", %{topology: topology, topic: topic, test: test} do
+      opts = [name: test, topology: topology, dispatcher: {__MODULE__, :custom_dispatcher}]
+      {:ok, _} = start_supervised({P, opts})
+
+      P.subscribe(test, topic, :register)
+      P.broadcast_from(test, self(), topic, :message)
       assert_received {:custom_dispatcher, :register, pid, :message} when pid == self()
     end
   end
