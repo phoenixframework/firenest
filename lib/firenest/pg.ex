@@ -33,9 +33,10 @@ defmodule Firenest.PG do
   # TODO
   # def dirty_list(pg, topic)
 
-  defp multicall(pids, request, timeout) do
-    pids
-    |> Enum.map(fn pid ->
+  defp multicall(servers, request, timeout) do
+    servers
+    |> Enum.map(fn server ->
+      pid = Process.whereis(server)
       ref = Process.monitor(pid)
       send(pid, {:"$gen_call", {self(), ref}, request})
       ref
