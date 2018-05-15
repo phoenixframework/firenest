@@ -5,14 +5,14 @@ defmodule Firenest.PG do
 
   defdelegate child_spec(opts), to: Firenest.PG.Supervisor
 
-  def track(pg, pid, topic, key, meta) when node(pid) == node() do
-    server = partition_info!(pg, topic)
-    GenServer.call(server, {:track, pid, topic, key, meta})
+  def track(pg, pid, group, key, meta) when node(pid) == node() do
+    server = partition_info!(pg, group)
+    GenServer.call(server, {:track, pid, group, key, meta})
   end
 
-  def untrack(pg, pid, topic, key) when node(pid) == node() do
-    server = partition_info!(pg, topic)
-    GenServer.call(server, {:untrack, pid, topic, key})
+  def untrack(pg, pid, group, key) when node(pid) == node() do
+    server = partition_info!(pg, group)
+    GenServer.call(server, {:untrack, pid, group, key})
   end
 
   def untrack(pg, pid) when node(pid) == node() do
@@ -20,18 +20,18 @@ defmodule Firenest.PG do
     multicall(servers, {:untrack, pid}, 5_000)
   end
 
-  def update(pg, pid, topic, key, meta) when node(pid) == node() do
-    server = partition_info!(pg, topic)
-    GenServer.call(server, {:update, pid, topic, key, meta})
+  def update(pg, pid, group, key, meta) when node(pid) == node() do
+    server = partition_info!(pg, group)
+    GenServer.call(server, {:update, pid, group, key, meta})
   end
 
-  def list(pg, topic) do
-    server = partition_info!(pg, topic)
-    GenServer.call(server, {:list, topic}).()
+  def list(pg, group) do
+    server = partition_info!(pg, group)
+    GenServer.call(server, {:list, group}).()
   end
 
   # TODO
-  # def dirty_list(pg, topic)
+  # def dirty_list(pg, group)
 
   defp multicall(servers, request, timeout) do
     servers
@@ -57,8 +57,8 @@ defmodule Firenest.PG do
     end)
   end
 
-  defp partition_info!(pg, topic) do
-    hash = :erlang.phash2(topic)
+  defp partition_info!(pg, group) do
+    hash = :erlang.phash2(group)
     extract = {:element, {:+, {:rem, {:const, hash}, :"$1"}, 1}, :"$2"}
     ms = [{{:partitions, :"$1", :"$2"}, [], [extract]}]
     [info] = :ets.select(pg, ms)
@@ -89,7 +89,7 @@ defmodule Firenest.PG.Supervisor do
 
     %{
       id: __MODULE__,
-      start: {Supervisor, :start_link, [__MODULE__, arg, name: supervisor]},
+      start: {Supervisor, :start_link, [__MODULE__, arg, [name: supervisor]]},
       type: :supervisor
     }
   end
@@ -127,17 +127,22 @@ defmodule Firenest.PG.Server do
 
   @impl true
   def init({name, _opts}) do
+    Process.flag(:trap_exit, true)
     values = :ets.new(name, [:named_table, :protected, :ordered_set])
-    pids = :ets.new(__MODULE__.Pids, [:duplicate_bag])
+    pids = :ets.new(__MODULE__.Pids, [:duplicate_bag, keypos: 2])
     {:ok, %{values: values, pids: pids}}
   end
 
   @impl true
-  # def handle_call({:track, pid, topic, key, meta}, state) do
+  def handle_call({:track, pid, group, key, meta}, _from, state) do
+    %{values: values, pids: pids} = state
+    Process.link(pid)
+    :ets.insert(values, {{group, pid, key}, meta})
+    :ets.insert(pids, {group, pid, key})
+    {:reply, :ok, state}
+  end
 
-  # end
-
-  # def handle_call({:untrack, pid, topic, key}, state) do
+  # def handle_call({:untrack, pid, group, key}, state) do
 
   # end
 
@@ -145,7 +150,29 @@ defmodule Firenest.PG.Server do
 
   # end
 
-  # def handle_call({:list, topic}, state) do
+  def handle_call({:list, group}, _from, state) do
+    %{values: values} = state
 
-  # end
+    read = fn ->
+      ms = [{{{group, :_, :"$1"}, :"$2"}, [], [{{:"$1", :"$2"}}]}]
+      :ets.select(values, ms)
+    end
+
+    {:reply, read, state}
+  end
+
+  @impl true
+  def handle_info({:EXIT, pid, reason}, state) do
+    %{values: values, pids: pids} = state
+
+    case :ets.take(pids, pid) do
+      [] ->
+        {:stop, state, reason}
+
+      list when is_list(list) ->
+        ms = for key <- list, do: {{key, :_}, [], [true]}
+        :ets.select_delete(values, ms)
+        {:noreply, state}
+    end
+  end
 end
