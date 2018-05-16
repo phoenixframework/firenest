@@ -8,7 +8,7 @@ defmodule Firenest.PGTest do
   end
 
   setup %{test: test, topology: topology} do
-    start_supervised!({PG, name: test, topology: topology})
+    {:ok, _} = start_supervised({PG, name: test, topology: topology})
     {:ok, pg: test}
   end
 
