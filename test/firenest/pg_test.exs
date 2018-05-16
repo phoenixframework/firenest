@@ -26,7 +26,7 @@ defmodule Firenest.PGTest do
     assert [] = PG.list(pg, :foo)
   end
 
-  test "pg dies if linked process terminates", %{pg: pg} do
+  test "pg dies if linked, untracked process terminates", %{pg: pg} do
     parent = self()
     [{_, pid, _, _}] = Supervisor.which_children(Module.concat(pg, "Supervisor"))
     ref = Process.monitor(pid)
@@ -42,5 +42,19 @@ defmodule Firenest.PGTest do
 
     Process.exit(temp, :shutdown)
     assert_receive {:DOWN, ^ref, _, _, _}
+  end
+
+  test "untrack/2", %{pg: pg} do
+    PG.track(pg, self(), :foo, :bar, :baz)
+    assert [_] = PG.list(pg, :foo)
+    PG.untrack(pg, self())
+    assert [] == PG.list(pg, :foo)
+  end
+
+  test "untrack/4", %{pg: pg} do
+    PG.track(pg, self(), :foo, :bar, :baz)
+    assert [_] = PG.list(pg, :foo)
+    PG.untrack(pg, self(), :foo, :bar)
+    assert [] == PG.list(pg, :foo)
   end
 end

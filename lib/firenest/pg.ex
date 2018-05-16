@@ -142,13 +142,35 @@ defmodule Firenest.PG.Server do
     {:reply, :ok, state}
   end
 
-  # def handle_call({:untrack, pid, group, key}, state) do
+  def handle_call({:untrack, pid, group, key}, _from, state) do
+    %{values: values, pids: pids} = state
+    key = {group, pid, key}
+    ms = [{key, [], [true]}]
 
-  # end
+    case :ets.select_delete(pids, ms) do
+      0 ->
+        {:reply, {:error, :not_tracked}, state}
 
-  # def handle_call({:untrack, pid}, state) do
+      1 ->
+        unless :ets.member(pids, pid) do
+          Process.unlink(pid)
+        end
 
-  # end
+        :ets.delete(values, key)
+        {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:untrack, pid}, _from, state) do
+    %{values: values, pids: pids} = state
+
+    if untrack_pid(pids, values, pid) do
+      Process.unlink(pid)
+      {:reply, :ok, state}
+    else
+      {:reply, {:error, :not_tracked}, state}
+    end
+  end
 
   def handle_call({:list, group}, _from, state) do
     %{values: values} = state
@@ -165,14 +187,22 @@ defmodule Firenest.PG.Server do
   def handle_info({:EXIT, pid, reason}, state) do
     %{values: values, pids: pids} = state
 
+    if untrack_pid(pids, values, pid) do
+      {:noreply, state}
+    else
+      {:stop, reason, state}
+    end
+  end
+
+  defp untrack_pid(pids, values, pid) do
     case :ets.take(pids, pid) do
       [] ->
-        {:stop, state, reason}
+        false
 
-      list when is_list(list) ->
+      list ->
         ms = for key <- list, do: {{key, :_}, [], [true]}
         :ets.select_delete(values, ms)
-        {:noreply, state}
+        true
     end
   end
 end
