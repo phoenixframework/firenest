@@ -1,20 +1,26 @@
 defmodule Firenest.PG do
   alias Firenest.SyncedServer
 
-  @type pg() :: SyncedServer.server()
+  @type pg() :: atom()
+  @type group() :: term()
+  @type key() :: term()
+  @type value() :: term()
 
   defdelegate child_spec(opts), to: Firenest.PG.Supervisor
 
-  def join(pg, group, key, pid, meta) when node(pid) == node() do
+  @spec join(pg(), group(), key(), pid(), value()) :: :ok | {:error, :already_joined}
+  def join(pg, group, key, pid, value) when node(pid) == node() do
     server = partition_info!(pg, group)
-    GenServer.call(server, {:join, group, key, pid, meta})
+    GenServer.call(server, {:join, group, key, pid, value})
   end
 
+  @spec leave(pg(), group(), key(), pid()) :: :ok | {:error, :not_member}
   def leave(pg, group, key, pid) when node(pid) == node() do
     server = partition_info!(pg, group)
     GenServer.call(server, {:leave, group, key, pid})
   end
 
+  @spec leave(pg(), pid()) :: :ok | {:error, :not_member}
   def leave(pg, pid) when node(pid) == node() do
     servers = partition_infos!(pg)
     replies = multicall(servers, {:leave, pid}, 5_000)
@@ -26,16 +32,19 @@ defmodule Firenest.PG do
     end
   end
 
+  @spec update(pg(), group(), key(), pid(), (value() -> value())) :: :ok | {:error, :not_member}
   def update(pg, group, key, pid, update) when node(pid) == node() and is_function(update, 1) do
     server = partition_info!(pg, group)
     GenServer.call(server, {:update, group, key, pid, update})
   end
 
-  def replace(pg, group, key, pid, meta) when node(pid) == node() do
+  @spec replace(pg(), group(), key(), pid(), value()) :: :ok | {:error, :not_member}
+  def replace(pg, group, key, pid, value) when node(pid) == node() do
     server = partition_info!(pg, group)
-    GenServer.call(server, {:replace, group, key, pid, meta})
+    GenServer.call(server, {:replace, group, key, pid, value})
   end
 
+  @spec members(pg(), group()) :: [{key(), value()}]
   def members(pg, group) do
     server = partition_info!(pg, group)
     GenServer.call(server, {:members, group}).()
@@ -145,7 +154,7 @@ defmodule Firenest.PG.Server do
   end
 
   @impl true
-  def handle_call({:join, group, key, pid, meta}, _from, state) do
+  def handle_call({:join, group, key, pid, value}, _from, state) do
     %{values: values, pids: pids} = state
     Process.link(pid)
     ets_key = {group, pid, key}
@@ -153,7 +162,7 @@ defmodule Firenest.PG.Server do
     if :ets.member(values, ets_key) do
       {:reply, {:error, :already_joined}, state}
     else
-      :ets.insert(values, {{group, pid, key}, meta})
+      :ets.insert(values, {{group, pid, key}, value})
       :ets.insert(pids, {group, pid, key})
       {:reply, :ok, state}
     end
@@ -192,12 +201,12 @@ defmodule Firenest.PG.Server do
     end
   end
 
-  def handle_call({:replace, group, key, pid, meta}, _from, state) do
+  def handle_call({:replace, group, key, pid, value}, _from, state) do
     %{values: values} = state
     ets_key = {group, pid, key}
 
     if :ets.member(values, ets_key) do
-      :ets.insert(values, {ets_key, meta})
+      :ets.insert(values, {ets_key, value})
       {:reply, :ok, state}
     else
       {:reply, {:error, :not_member}, state}
