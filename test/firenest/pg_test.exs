@@ -12,49 +12,125 @@ defmodule Firenest.PGTest do
     {:ok, pg: test}
   end
 
-  test "tracks processes", %{pg: pg} do
-    PG.track(pg, self(), :foo, :bar, :baz)
-    assert [{:bar, :baz}] == PG.list(pg, :foo)
+  describe "join/5" do
+    test "adds process", %{pg: pg} do
+      assert PG.join(pg, :foo, :bar, self(), :baz) == :ok
+      assert [{:bar, :baz}] == PG.members(pg, :foo)
+    end
+
+    test "rejects double joins", %{pg: pg} do
+      assert PG.join(pg, :foo, :bar, self(), :baz) == :ok
+      assert PG.join(pg, :foo, :bar, self(), :baz) == {:error, :already_joined}
+    end
+
+    test "cleans up entries after process dies", %{pg: pg} do
+      {pid, ref} = spawn_monitor(Process, :sleep, [:infinity])
+      PG.join(pg, :foo, :bar, pid, :baz)
+      assert [_] = PG.members(pg, :foo)
+      Process.exit(pid, :kill)
+      assert_receive {:DOWN, ^ref, _, _, _}
+      assert [] = PG.members(pg, :foo)
+    end
+
+    test "pg dies if other linked process dies", %{pg: pg} do
+      parent = self()
+      [{_, pid, _, _}] = Supervisor.which_children(Module.concat(pg, "Supervisor"))
+      ref = Process.monitor(pid)
+
+      temp =
+        spawn(fn ->
+          Process.link(pid)
+          send(parent, :continue)
+          Process.sleep(:infinity)
+        end)
+
+      assert_receive :continue
+
+      Process.exit(temp, :shutdown)
+      assert_receive {:DOWN, ^ref, _, _, _}
+    end
   end
 
-  test "processes are clened up when they die", %{pg: pg} do
-    {pid, ref} = spawn_monitor(Process, :sleep, [:infinity])
-    PG.track(pg, pid, :foo, :bar, :baz)
-    assert [_] = PG.list(pg, :foo)
-    Process.exit(pid, :kill)
-    assert_receive {:DOWN, ^ref, _, _, _}
-    assert [] = PG.list(pg, :foo)
+  describe "leave/2" do
+    test "removes entry", %{pg: pg} do
+      PG.join(pg, :foo, :bar, self(), :baz)
+
+      assert [_] = PG.members(pg, :foo)
+      assert PG.leave(pg, self()) == :ok
+      assert [] == PG.members(pg, :foo)
+    end
+
+    test "does not remove non members", %{pg: pg} do
+      [{_, pid, _, _}] = Supervisor.which_children(Module.concat(pg, "Supervisor"))
+      Process.link(pid)
+
+      assert PG.leave(pg, self()) == {:error, :not_member}
+      {:links, links} = Process.info(self(), :links)
+      assert pid in links
+    end
   end
 
-  test "pg dies if linked, untracked process terminates", %{pg: pg} do
-    parent = self()
-    [{_, pid, _, _}] = Supervisor.which_children(Module.concat(pg, "Supervisor"))
-    ref = Process.monitor(pid)
+  describe "leave/4" do
+    test "removes single entry", %{pg: pg} do
+      PG.join(pg, :foo, :bar, self(), :baz)
+      assert [_] = PG.members(pg, :foo)
 
-    temp =
-      spawn(fn ->
-        Process.link(pid)
-        send(parent, :continue)
-        Process.sleep(:infinity)
-      end)
+      assert PG.leave(pg, :foo, :bar, self()) == :ok
+      assert [] == PG.members(pg, :foo)
+    end
 
-    assert_receive :continue
+    test "leaves other entries intact", %{pg: pg} do
+      PG.join(pg, :foo, :bar, self(), :baz)
+      PG.join(pg, :foo, :baar, self(), :baz)
+      assert [_, _] = PG.members(pg, :foo)
 
-    Process.exit(temp, :shutdown)
-    assert_receive {:DOWN, ^ref, _, _, _}
+      assert PG.leave(pg, :foo, :bar, self()) == :ok
+      assert [{:baar, :baz}] == PG.members(pg, :foo)
+    end
+
+    test "does not remove non members", %{pg: pg} do
+      [{_, pid, _, _}] = Supervisor.which_children(Module.concat(pg, "Supervisor"))
+      Process.link(pid)
+
+      assert PG.leave(pg, :foo, :bar, self()) == {:error, :not_member}
+      {:links, links} = Process.info(self(), :links)
+      assert pid in links
+    end
   end
 
-  test "untrack/2", %{pg: pg} do
-    PG.track(pg, self(), :foo, :bar, :baz)
-    assert [_] = PG.list(pg, :foo)
-    PG.untrack(pg, self())
-    assert [] == PG.list(pg, :foo)
+  describe "update/5" do
+    test "executes the update if entry is present", %{pg: pg} do
+      parent = self()
+      PG.join(pg, :foo, :bar, self(), 1)
+      assert [{:bar, 1}] == PG.members(pg, :foo)
+
+      update = fn value ->
+        send(parent, value)
+        value + 1
+      end
+
+      assert PG.update(pg, :foo, :bar, self(), update) == :ok
+      assert_received 1
+      assert [{:bar, 2}] == PG.members(pg, :foo)
+    end
+
+    test "does not execute update if entry is absent", %{pg: pg} do
+      parent = self()
+      update = fn value -> Process.exit(parent, {:unexpected_update, value}) end
+      assert PG.update(pg, :foo, :bar, self(), update) == {:error, :not_member}
+    end
   end
 
-  test "untrack/4", %{pg: pg} do
-    PG.track(pg, self(), :foo, :bar, :baz)
-    assert [_] = PG.list(pg, :foo)
-    PG.untrack(pg, self(), :foo, :bar)
-    assert [] == PG.list(pg, :foo)
+  describe "replace/5" do
+    test "updates value if entry is present", %{pg: pg} do
+      PG.join(pg, :foo, :bar, self(), 1)
+      assert [{:bar, 1}] == PG.members(pg, :foo)
+      assert PG.replace(pg, :foo, :bar, self(), 2) == :ok
+      assert [{:bar, 2}] == PG.members(pg, :foo)
+    end
+
+    test "does not update value if entry is absent", %{pg: pg} do
+      assert PG.replace(pg, :foo, :bar, self(), 2) == {:error, :not_member}
+    end
   end
 end

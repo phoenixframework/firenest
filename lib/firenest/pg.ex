@@ -5,29 +5,40 @@ defmodule Firenest.PG do
 
   defdelegate child_spec(opts), to: Firenest.PG.Supervisor
 
-  def track(pg, pid, group, key, meta) when node(pid) == node() do
+  def join(pg, group, key, pid, meta) when node(pid) == node() do
     server = partition_info!(pg, group)
-    GenServer.call(server, {:track, pid, group, key, meta})
+    GenServer.call(server, {:join, group, key, pid, meta})
   end
 
-  def untrack(pg, pid, group, key) when node(pid) == node() do
+  def leave(pg, group, key, pid) when node(pid) == node() do
     server = partition_info!(pg, group)
-    GenServer.call(server, {:untrack, pid, group, key})
+    GenServer.call(server, {:leave, group, key, pid})
   end
 
-  def untrack(pg, pid) when node(pid) == node() do
+  def leave(pg, pid) when node(pid) == node() do
     servers = partition_infos!(pg)
-    multicall(servers, {:untrack, pid}, 5_000)
+    replies = multicall(servers, {:leave, pid}, 5_000)
+
+    if :ok in replies do
+      :ok
+    else
+      {:error, :not_member}
+    end
   end
 
-  def update(pg, pid, group, key, meta) when node(pid) == node() do
+  def update(pg, group, key, pid, update) when node(pid) == node() and is_function(update, 1) do
     server = partition_info!(pg, group)
-    GenServer.call(server, {:update, pid, group, key, meta})
+    GenServer.call(server, {:update, group, key, pid, update})
   end
 
-  def list(pg, group) do
+  def replace(pg, group, key, pid, meta) when node(pid) == node() do
     server = partition_info!(pg, group)
-    GenServer.call(server, {:list, group}).()
+    GenServer.call(server, {:replace, group, key, pid, meta})
+  end
+
+  def members(pg, group) do
+    server = partition_info!(pg, group)
+    GenServer.call(server, {:members, group}).()
   end
 
   # TODO
@@ -41,7 +52,7 @@ defmodule Firenest.PG do
       send(pid, {:"$gen_call", {self(), ref}, request})
       ref
     end)
-    |> Enum.each(fn ref ->
+    |> Enum.map(fn ref ->
       receive do
         {^ref, reply} ->
           Process.demonitor(ref, [:flush])
@@ -134,22 +145,28 @@ defmodule Firenest.PG.Server do
   end
 
   @impl true
-  def handle_call({:track, pid, group, key, meta}, _from, state) do
+  def handle_call({:join, group, key, pid, meta}, _from, state) do
     %{values: values, pids: pids} = state
     Process.link(pid)
-    :ets.insert(values, {{group, pid, key}, meta})
-    :ets.insert(pids, {group, pid, key})
-    {:reply, :ok, state}
+    ets_key = {group, pid, key}
+
+    if :ets.member(values, ets_key) do
+      {:reply, {:error, :already_joined}, state}
+    else
+      :ets.insert(values, {{group, pid, key}, meta})
+      :ets.insert(pids, {group, pid, key})
+      {:reply, :ok, state}
+    end
   end
 
-  def handle_call({:untrack, pid, group, key}, _from, state) do
+  def handle_call({:leave, group, key, pid}, _from, state) do
     %{values: values, pids: pids} = state
     key = {group, pid, key}
     ms = [{key, [], [true]}]
 
     case :ets.select_delete(pids, ms) do
       0 ->
-        {:reply, {:error, :not_tracked}, state}
+        {:reply, {:error, :not_member}, state}
 
       1 ->
         unless :ets.member(pids, pid) do
@@ -161,18 +178,44 @@ defmodule Firenest.PG.Server do
     end
   end
 
-  def handle_call({:untrack, pid}, _from, state) do
+  def handle_call({:update, group, key, pid, update}, _from, state) do
+    %{values: values} = state
+    ets_key = {group, pid, key}
+
+    case ets_fetch_element(values, ets_key, 2) do
+      {:ok, value} ->
+        :ets.insert(values, {ets_key, update.(value)})
+        {:reply, :ok, state}
+
+      :error ->
+        {:reply, {:error, :not_member}, state}
+    end
+  end
+
+  def handle_call({:replace, group, key, pid, meta}, _from, state) do
+    %{values: values} = state
+    ets_key = {group, pid, key}
+
+    if :ets.member(values, ets_key) do
+      :ets.insert(values, {ets_key, meta})
+      {:reply, :ok, state}
+    else
+      {:reply, {:error, :not_member}, state}
+    end
+  end
+
+  def handle_call({:leave, pid}, _from, state) do
     %{values: values, pids: pids} = state
 
     if untrack_pid(pids, values, pid) do
       Process.unlink(pid)
       {:reply, :ok, state}
     else
-      {:reply, {:error, :not_tracked}, state}
+      {:reply, {:error, :not_member}, state}
     end
   end
 
-  def handle_call({:list, group}, _from, state) do
+  def handle_call({:members, group}, _from, state) do
     %{values: values} = state
 
     read = fn ->
@@ -204,5 +247,11 @@ defmodule Firenest.PG.Server do
         :ets.select_delete(values, ms)
         true
     end
+  end
+
+  defp ets_fetch_element(table, key, pos) do
+    {:ok, :ets.lookup_element(table, key, pos)}
+  catch
+    :error, :badarg -> :error
   end
 end
