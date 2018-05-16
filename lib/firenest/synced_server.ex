@@ -410,7 +410,7 @@ defmodule Firenest.SyncedServer do
           :erlang.raise(:error, :undef, System.stacktrace())
         else
           {:registered_name, name} = Process.info(self(), :registered_name)
-          pattern = 'Undefined handle_info/2 in ~ts, process ~ts received unexpected message: ~p~n'
+          pattern = 'Undefined handle_info/2 in ~ts, process ~ts received message: ~p~n'
           :error_logger.warning_msg(pattern, [inspect(mod), inspect(name), hd(args)])
           {:noreply, int}
         end
