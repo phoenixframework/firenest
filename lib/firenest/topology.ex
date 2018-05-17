@@ -207,7 +207,7 @@ defmodule Firenest.Topology do
 
     * `{:named_down, node_ref, name}` is delivered whenever a process
       with name `name` is down on the node identified by `node_ref`.
-      It can be deivered when such processes crashes or when there is
+      It can be delivered when such processes crashes or when there is
       a disconnection. The message is guaranteed to be delivered after
       the node is removed from the list returned by `nodes/2`. Note
       the topology may not necessarily guarantee that no messages
@@ -226,7 +226,7 @@ defmodule Firenest.Topology do
   node, but it does not mean that process can see you. Therefore, if you want
   to engage on synchronous communication with that process, you must expect
   two messages, the `named_up` message and another message sent by the other
-  process that declares its can see you. In pseudo-code:
+  process that declares it can see you. In pseudo-code:
 
       def handle_info({:named_up, node, name}, state) do
         myself = Firenest.Topology.node(state.topology)
