@@ -333,11 +333,35 @@ defmodule Firenest.SyncedServerTest do
 
     setup %{test: test, topology: topology} do
       {:ok, pid} = S.start_link(EvalServer, 1, name: test, topology: topology)
-      mfa = {S, :start_link, [EvalServer, 1, [name: test, topology: topology]]}
+      mfa = &{S, :start_link, [EvalServer, &1, [name: test, topology: topology]]}
       {:ok, mfa: mfa, pid: pid}
     end
 
     describe "handle_replica/3" do
+      test "both ends receive message", %{pid: pid, node: node} = config do
+        parent = self()
+
+        fun = fn status, replica ->
+          send(parent, {:replica, status, replica, 1})
+          {:noreply, 1}
+        end
+
+        remote_fun =
+          quote do
+            {:ok,
+             fn status, replica ->
+               send(unquote(parent), {:replica, status, replica, 2})
+               {:noreply, 2}
+             end}
+          end
+
+        send(pid, {:state, fun})
+        second = start_another(config, remote_fun)
+
+        assert_receive {:replica, :up, ^second, 1}
+        assert_receive {:replica, :up, ^node, 2}
+      end
+
       test "{:noreply, state}", %{pid: pid} = config do
         parent = self()
 
@@ -558,16 +582,13 @@ defmodule Firenest.SyncedServerTest do
     end
 
     defp start_another(config) do
-      %{test: test, mfa: mfa, nodes: [second | _]} = config
+      start_another(config, quote(do: {:ok, fn _, _ -> {:noreply, 1} end}))
+    end
 
-      cmd =
-        quote do
-          fun = fn _, _ -> {:noreply, 1} end
-          send(unquote(test), {:state, fun})
-        end
+    defp start_another(config, initial_state) do
+      %{mfa: mfa, nodes: [second | _]} = config
 
-      Firenest.Test.start_link([elem(second, 0)], mfa)
-      assert send_eval(config, second, cmd) == :ok
+      Firenest.Test.start_link([elem(second, 0)], mfa.({:eval, initial_state}))
       second
     end
 
