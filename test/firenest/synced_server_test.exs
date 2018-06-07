@@ -358,8 +358,8 @@ defmodule Firenest.SyncedServerTest do
         send(pid, {:state, fun})
         second = start_another(config, remote_fun)
 
-        assert_receive {:replica, :up, ^second, 1}
-        assert_receive {:replica, :up, ^node, 2}
+        assert_receive {:replica, {:up, _}, ^second, 1}
+        assert_receive {:replica, {:up, _}, ^node, 2}
       end
 
       test "{:noreply, state}", %{pid: pid} = config do
@@ -373,7 +373,7 @@ defmodule Firenest.SyncedServerTest do
         send(pid, {:state, fun})
         second = start_another(config)
 
-        assert_receive {:replica, :up, ^second, 1}
+        assert_receive {:replica, {:up, _}, ^second, 1}
         assert S.call(pid, :state) == 1
       end
 
@@ -394,7 +394,7 @@ defmodule Firenest.SyncedServerTest do
         send(pid, {:state, fun})
         second = start_another(config)
 
-        assert_receive {:replica, :up, ^second, 1}
+        assert_receive {:replica, {:up, _}, ^second, 1}
         assert_receive {:timeout, 2}
         assert S.call(pid, :state) == 2
       end
@@ -411,7 +411,7 @@ defmodule Firenest.SyncedServerTest do
         second = start_another(config)
 
         assert_hibernate pid
-        assert_receive {:replica, :up, ^second, 1}
+        assert_receive {:replica, {:up, _}, ^second, 1}
         assert S.call(pid, :state) == 1
       end
 
@@ -432,7 +432,7 @@ defmodule Firenest.SyncedServerTest do
         send(pid, {:state, fun})
         second = start_another(config)
 
-        assert_receive {:replica, :up, ^second, 1}
+        assert_receive {:replica, {:up, _}, ^second, 1}
         assert_receive {:terminate, 1}
         assert_receive {:EXIT, ^pid, {:shutdown, _}}
       end
@@ -460,7 +460,7 @@ defmodule Firenest.SyncedServerTest do
           end
 
         assert send_eval(config, second, cmd) == :ok
-        assert_receive {:replica, :up, ^second, 1}
+        assert_receive {:replica, {:up, _}, ^second, 1}
         assert_receive {:replica, :down, ^second, 2}
         assert S.call(test, :state) == 2
       end

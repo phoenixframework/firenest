@@ -5,6 +5,9 @@ defmodule Firenest.Test.EvalServer do
   def init({:eval, cmd}), do: elem(Code.eval_quoted(cmd), 0)
   def init(state), do: {:ok, state}
 
+  def handshake_data(fun) when is_function(fun, 0), do: fun.()
+  def handshake_data(state), do: state
+
   def handle_call(:state, _, state), do: {:reply, state, state}
   def handle_call(fun, from, state), do: fun.(from, state)
 

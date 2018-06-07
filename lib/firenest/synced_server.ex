@@ -66,6 +66,14 @@ defmodule Firenest.SyncedServer do
             when new_state: state()
 
   @doc """
+  Invoked before connecting to a remote synced server.
+
+  The returned value will be passed to the remote server in the
+  `c:handle_replica/3` callback.
+  """
+  @callback handshake_data(state()) :: term()
+
+  @doc """
   Invoked when a status of a remote synced server changes.
 
   When the `:up` signal is delivered, a two-step handshake
@@ -226,12 +234,12 @@ defmodule Firenest.SyncedServer do
       mod: mod,
       int: nil,
       awaiting_hello: [],
-      awaiting_up: [],
+      awaiting_up: %{},
       replicas: []
     }
 
     with {:ok, state} <- init_mod(mod, arg, state),
-         {:ok, %{node_ref: node_ref} = state} <- sync_named(topology, name, state) do
+         {:ok, %{node_ref: node_ref} = state} <- sync_named(topology, state) do
       Process.put(__MODULE__, {topology, name, node_ref})
       {:ok, state}
     end
@@ -254,15 +262,17 @@ defmodule Firenest.SyncedServer do
 
   @impl true
   def handle_info({:named_up, remote_ref, name}, %{name: name} = state) do
-    %{awaiting_up: awaiting, replicas: replicas, topology: topology, node_ref: node_ref} = state
-    init_replicas(topology, name, [remote_ref], node_ref)
+    %{awaiting_up: awaiting, replicas: replicas} = state
+    init_replicas([remote_ref], state)
 
-    case delete_element(awaiting, remote_ref) do
-      {:ok, awaiting} ->
-        result = apply_callback(state, :handle_replica, [:up, remote_ref])
+    case awaiting do
+      %{^remote_ref => data} ->
+        result = apply_callback(state, :handle_replica, [{:up, data}, remote_ref])
+        awaiting = Map.delete(awaiting, remote_ref)
         handle_common(result, %{state | awaiting_up: awaiting, replicas: [remote_ref | replicas]})
 
-      :error ->
+      %{} ->
+        %{awaiting_hello: awaiting} = state
         {:noreply, %{state | awaiting_hello: [remote_ref | awaiting]}}
     end
   end
@@ -280,21 +290,19 @@ defmodule Firenest.SyncedServer do
     end
   end
 
-  def handle_info({__MODULE__, :hello, remote_ref}, state) do
-    %{awaiting_hello: awaiting, node_ref: node_ref, replicas: replicas} = state
+  def handle_info({__MODULE__, :hello, data, remote_ref}, state) do
+    %{awaiting_hello: awaiting, replicas: replicas} = state
 
     case delete_element(awaiting, remote_ref) do
       {:ok, awaiting} ->
-        result = apply_callback(state, :handle_replica, [:up, remote_ref])
+        result = apply_callback(state, :handle_replica, [{:up, data}, remote_ref])
 
-        handle_common(result, %{
-          state
-          | awaiting_hello: awaiting,
-            replicas: [remote_ref | replicas]
-        })
+        state = %{state | awaiting_hello: awaiting, replicas: [remote_ref | replicas]}
+        handle_common(result, state)
 
       :error ->
-        {:noreply, %{state | awaiting_up: [remote_ref | awaiting]}}
+        %{awaiting_up: awaiting} = state
+        {:noreply, %{state | awaiting_up: Map.put(awaiting, remote_ref, data)}}
     end
   end
 
@@ -387,21 +395,23 @@ defmodule Firenest.SyncedServer do
     end
   end
 
-  defp sync_named(topology, name, state) do
+  defp sync_named(topology, state) do
     node_ref = Topology.node(topology)
 
     case Topology.sync_named(topology, self()) do
       {:ok, replicas} ->
-        init_replicas(topology, name, replicas, node_ref)
-        {:ok, %{state | awaiting_hello: replicas, node_ref: node_ref}}
+        state = %{state | awaiting_hello: replicas, node_ref: node_ref}
+        init_replicas(replicas, state)
+        {:ok, state}
 
       {:error, error} ->
         {:stop, {:sync_named, error}}
     end
   end
 
-  defp init_replicas(topology, name, replicas, node_ref) do
-    Enum.each(replicas, &Topology.send(topology, &1, name, {__MODULE__, :hello, node_ref}))
+  defp init_replicas(replicas, %{topology: topology, name: name, node_ref: node_ref} = state) do
+    data = apply_callback(state, :handshake_data, [])
+    Enum.each(replicas, &Topology.send(topology, &1, name, {__MODULE__, :hello, data, node_ref}))
   end
 
   defp apply_callback(%{mod: mod, int: int}, fun, args) do
