@@ -17,18 +17,18 @@ defmodule Firenest.PGTest do
 
   describe "join/5" do
     test "adds process", %{pg: pg} do
-      assert PG.join(pg, :foo, :bar, self(), :baz) == :ok
-      assert [{:bar, :baz}] == PG.members(pg, :foo)
+      assert PG.join(pg, :foo, self(), :baz) == :ok
+      assert [:baz] == PG.members(pg, :foo)
     end
 
     test "rejects double joins", %{pg: pg} do
-      assert PG.join(pg, :foo, :bar, self(), :baz) == :ok
-      assert PG.join(pg, :foo, :bar, self(), :baz) == {:error, :already_joined}
+      assert PG.join(pg, :foo, self(), :baz) == :ok
+      assert PG.join(pg, :foo, self(), :baz) == {:error, :already_joined}
     end
 
     test "cleans up entries after process dies", %{pg: pg} do
       {pid, ref} = spawn_monitor(Process, :sleep, [:infinity])
-      PG.join(pg, :foo, :bar, pid, :baz)
+      PG.join(pg, :foo, pid, :baz)
       assert [_] = PG.members(pg, :foo)
       Process.exit(pid, :kill)
       assert_receive {:DOWN, ^ref, _, _, _}
@@ -56,7 +56,7 @@ defmodule Firenest.PGTest do
 
   describe "leave/2" do
     test "removes entry", %{pg: pg} do
-      PG.join(pg, :foo, :bar, self(), :baz)
+      PG.join(pg, :foo, self(), :baz)
 
       assert [_] = PG.members(pg, :foo)
       assert PG.leave(pg, self()) == :ok
@@ -75,27 +75,28 @@ defmodule Firenest.PGTest do
 
   describe "leave/4" do
     test "removes single entry", %{pg: pg} do
-      PG.join(pg, :foo, :bar, self(), :baz)
+      PG.join(pg, :foo, self(), :baz)
       assert [_] = PG.members(pg, :foo)
 
-      assert PG.leave(pg, :foo, :bar, self()) == :ok
+      assert PG.leave(pg, :foo, self()) == :ok
       assert [] == PG.members(pg, :foo)
     end
 
     test "leaves other entries intact", %{pg: pg} do
-      PG.join(pg, :foo, :bar, self(), :baz)
-      PG.join(pg, :foo, :baar, self(), :baz)
+      pid = spawn_link(fn -> Process.sleep(:infinity) end)
+      PG.join(pg, :foo, self(), :baz)
+      PG.join(pg, :foo, pid, :baaz)
       assert [_, _] = PG.members(pg, :foo)
 
-      assert PG.leave(pg, :foo, :bar, self()) == :ok
-      assert [{:baar, :baz}] == PG.members(pg, :foo)
+      assert PG.leave(pg, :foo, self()) == :ok
+      assert [:baaz] == PG.members(pg, :foo)
     end
 
     test "does not remove non members", %{pg: pg} do
       [{_, pid, _, _}] = Supervisor.which_children(Module.concat(pg, "Supervisor"))
       Process.link(pid)
 
-      assert PG.leave(pg, :foo, :bar, self()) == {:error, :not_member}
+      assert PG.leave(pg, :foo, self()) == {:error, :not_member}
       {:links, links} = Process.info(self(), :links)
       assert pid in links
     end
@@ -104,36 +105,36 @@ defmodule Firenest.PGTest do
   describe "update/5" do
     test "executes the update if entry is present", %{pg: pg} do
       parent = self()
-      PG.join(pg, :foo, :bar, self(), 1)
-      assert [{:bar, 1}] == PG.members(pg, :foo)
+      PG.join(pg, :foo, self(), 1)
+      assert [1] == PG.members(pg, :foo)
 
       update = fn value ->
         send(parent, value)
         value + 1
       end
 
-      assert PG.update(pg, :foo, :bar, self(), update) == :ok
+      assert PG.update(pg, :foo, self(), update) == :ok
       assert_received 1
-      assert [{:bar, 2}] == PG.members(pg, :foo)
+      assert [2] == PG.members(pg, :foo)
     end
 
     test "does not execute update if entry is absent", %{pg: pg} do
       parent = self()
       update = fn value -> Process.exit(parent, {:unexpected_update, value}) end
-      assert PG.update(pg, :foo, :bar, self(), update) == {:error, :not_member}
+      assert PG.update(pg, :foo, self(), update) == {:error, :not_member}
     end
   end
 
   describe "replace/5" do
     test "updates value if entry is present", %{pg: pg} do
-      PG.join(pg, :foo, :bar, self(), 1)
-      assert [{:bar, 1}] == PG.members(pg, :foo)
-      assert PG.replace(pg, :foo, :bar, self(), 2) == :ok
-      assert [{:bar, 2}] == PG.members(pg, :foo)
+      PG.join(pg, :foo, self(), 1)
+      assert [1] == PG.members(pg, :foo)
+      assert PG.replace(pg, :foo, self(), 2) == :ok
+      assert [2] == PG.members(pg, :foo)
     end
 
     test "does not update value if entry is absent", %{pg: pg} do
-      assert PG.replace(pg, :foo, :bar, self(), 2) == {:error, :not_member}
+      assert PG.replace(pg, :foo, self(), 2) == {:error, :not_member}
     end
   end
 
@@ -162,16 +163,14 @@ defmodule Firenest.PGTest do
       cmd =
         quote do
           spawn(fn ->
-            :ok = PG.join(unquote(pg), unquote(group), :bar, self(), :baz)
+            :ok = PG.join(unquote(pg), unquote(group), self(), :baz)
             :timer.sleep(:infinity)
           end)
         end
 
       T.send(topology, second, evaluator, {:eval_quoted, cmd})
 
-      :timer.sleep(1_000)
-      assert PG.members(pg, group) == [{:bar, :baz}]
-      # wait_until(fn -> PG.members(pg, group) == [{:bar, :baz}] end)
+      wait_until(fn -> PG.members(pg, group) == [:baz] end)
     end
   end
 end
