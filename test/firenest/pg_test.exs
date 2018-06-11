@@ -1,14 +1,17 @@
 defmodule Firenest.PGTest do
   use ExUnit.Case, async: true
 
+  alias Firenest.Topology, as: T
   alias Firenest.PG
+
+  import Firenest.TestHelpers
 
   setup_all do
     {:ok, topology: Firenest.Test, evaluator: Firenest.Test.Evaluator}
   end
 
   setup %{test: test, topology: topology} do
-    {:ok, _} = start_supervised({PG, name: test, topology: topology})
+    assert {:ok, _} = start_supervised({PG, name: test, topology: topology})
     {:ok, pg: test}
   end
 
@@ -131,6 +134,44 @@ defmodule Firenest.PGTest do
 
     test "does not update value if entry is absent", %{pg: pg} do
       assert PG.replace(pg, :foo, :bar, self(), 2) == {:error, :not_member}
+    end
+  end
+
+  defmodule Distributed do
+    use ExUnit.Case, async: true
+
+    setup_all do
+      wait_until(fn -> Process.whereis(:firenest_topology_setup) == nil end)
+      nodes = [:"first@127.0.0.1", :"second@127.0.0.1"]
+      topology = Firenest.Test
+      pg = Firenest.Test.PG
+      %{start: start} = PG.child_spec(name: pg, topology: topology)
+      Firenest.Test.start_link(nodes, start)
+      nodes = for {name, _} = ref <- T.nodes(topology), name in nodes, do: ref
+
+      {:ok, topology: topology, evaluator: Firenest.Test.Evaluator, nodes: nodes, pg: pg}
+    end
+
+    setup %{test: test} do
+      {:ok, group: test}
+    end
+
+    test "remote join is propagated", config do
+      %{topology: topology, evaluator: evaluator, pg: pg, group: group, nodes: [second]} = config
+
+      cmd =
+        quote do
+          spawn(fn ->
+            :ok = PG.join(unquote(pg), unquote(group), :bar, self(), :baz)
+            :timer.sleep(:infinity)
+          end)
+        end
+
+      T.send(topology, second, evaluator, {:eval_quoted, cmd})
+
+      :timer.sleep(1_000)
+      assert PG.members(pg, group) == [{:bar, :baz}]
+      # wait_until(fn -> PG.members(pg, group) == [{:bar, :baz}] end)
     end
   end
 end
