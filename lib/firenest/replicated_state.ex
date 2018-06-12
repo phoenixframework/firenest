@@ -2,15 +2,25 @@ defmodule Firenest.ReplicatedState do
   @moduledoc """
   Facility for replicating ephemeral state across cluster.
 
-  Allows registering some state attached to aprocess and replicated
-  across cluster. The state is always linked to a liftetime of a
-  process - when the process dies the state will be removed on all
-  nodes and in case nodes get disconnected, all the state from
-  disconnected nodes will be (temporarily) removed. The state
-  can be only updated from the node where the process lives.
+  Allows registering an ephemeral state attached to a process
+  that will be replicated across the cluster. The state is always
+  linked to a lifetime of a process - when the process dies the
+  state will be removed on all nodes and in case nodes get disconnected,
+  all the state from disconnected nodes will be (temporarily) removed.
+  The state can be only modified from the node where the process lives.
 
   The state is managed through callbacks that are invoked on the
-  node where the process lives and remotely on other nodes.
+  node where the process lives and remotely on other nodes when local
+  changes are propagated.
+
+  The state is replicated incrementally through building local "deltas"
+  (or changes to state) and periodically replicating them remotely. Only
+  some amount of recent deltas is retained for "catching up" remote nodes.
+  If remote node is too far behind the current state, a full state transfer
+  will be transferred to update it. If keeping track of incremental changes
+  is not convenient for a particular state type, the value of a delta can
+  be set to be equal to the current state - this will always cause full
+  state transfers.
   """
   alias Firenest.SyncedServer
 
@@ -25,15 +35,18 @@ defmodule Firenest.ReplicatedState do
   @doc """
   Set up new stare for a process.
 
-  The `arg` is received from the corrsponding `join/4` call.
+  The `arg` is received from the corresponding `join/4` call.
   Sets up local data for incremental tracking of changes to state and
   an initial state that will be replicated to remote nodes.
+
+  This is a good place for broadcasting local state changes.
   """
   @callback local_join(arg :: term(), config()) ::
               {initial_delta :: local_delta(), initial_state :: state()}
 
   @doc """
-  Called whenever the `update/4` function is called for a process.
+  Called whenever the `update/4` function is called to update
+  the state registered for a process.
 
   It returns updated local delta and updated state.
 
@@ -53,11 +66,13 @@ defmodule Firenest.ReplicatedState do
   @callback local_leave(state(), config()) :: term()
 
   @doc """
-  Called whenever the server is about to replicate state to a remote node.
+  Called whenever the server is about to incrementally replicate local
+  state to a remote node.
 
   It takes in the local delta value constructed in the `c:local_update/4`
   calls and returns a remote delta value that will be replicated to other
-  servers.
+  servers. The value of the local delta is reset to the initial delta value
+  returned from the `c:local_join/2` callback.
 
   In case the callback is not provided it defaults to just returning local delta.
   """
@@ -66,15 +81,15 @@ defmodule Firenest.ReplicatedState do
   @doc """
   Called whenever a remote delta is received from another node.
 
-  The `remote_delta` value is the return value of `c:prepare_remote_delta/2`
+  The `remote_delta` value is the return value of the `c:prepare_remote_delta/2`
   callback. The result of applying the remote delta to state must be
-  extactly the same as the result of applying local updates to the
+  exactly the same as the result of applying local updates to the
   state in the `c:local_update/3` callback.
   """
   @callback handle_remote_delta(remote_delta(), state(), config()) :: {:ok, state()} | :noop
 
   @doc """
-  Called when remote changes are received by the local process.
+  Called when remote changes are received by the local server.
 
   It receives a list of observed remote changes for all the tracked keys.
   A `process_state_change` specifies how the state for a single process changed.
@@ -86,11 +101,10 @@ defmodule Firenest.ReplicatedState do
       to replicate incremental changes to remote state through deltas and a full
       state transfer was performed.
     * `{last_known_state, [..., {:delta, remote_delta}, ...]}` in case
-      incremental changes to the remote state were communicated through the delta
-      mechanism.
+      incremental changes to the remote state were communicated.
 
   This callback is optional and its behaviour depends on the value
-  of the `:remote_changes` option when starting the process.
+  of the `:remote_changes` option provided when the server is started.
 
     * `:ignore` - the callback is not invoked and the server skips
       all operations required for tracking the changes. This is the
@@ -104,10 +118,10 @@ defmodule Firenest.ReplicatedState do
 
     * `:observe_collapsed` - collapses the information about remote state
       changes. For example a `[:joined, {:delta, ...}]` sequence is collapsed
-      into just `[:joined]` with all the state changes alrady applied and a
+      into just `[:joined]` with all the state changes already applied and a
       `[{:delta, ...}, :left]` sequence is collapsed into just `[:left]`.
       This also means that for short-lived processes, no information
-      may be transfered if the chnages would contain both `:joined` and `:left`.
+      may be transferred if the changes would contain both `:joined` and `:left`.
 
   This is a good place for broadcasting remote state changes.
 
@@ -140,7 +154,7 @@ defmodule Firenest.ReplicatedState do
   defdelegate child_spec(opts), to: Firenest.ReplicatedState.Supervisor
 
   @doc """
-  Registeres process `pid` under `key` and starts tracking its state.
+  Registers state for `pid` under `key`.
 
   This calls the `c:local_join/2` callback with `arg` inside the server.
   """
@@ -163,10 +177,10 @@ defmodule Firenest.ReplicatedState do
 
   @doc """
   Unregisteres process `pid` from all keys it's registered under and
-  removes all its state.
+  removes all its states.
 
   This calls the `c:local_leave/2` callback inside the server for
-  each key the proess is leaving.
+  each key the process is leaving.
   """
   @spec leave(server(), pid()) :: :ok | {:error, :not_member}
   def leave(server, pid) when node(pid) == node() do
@@ -181,7 +195,7 @@ defmodule Firenest.ReplicatedState do
   end
 
   @doc """
-  Updates state of process `pid` under `key`.
+  Updates state registered for process `pid` under `key`.
 
   This calls the `c:local_update/4` callback inside the server passing
   the value of `update`.
