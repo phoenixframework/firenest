@@ -1,8 +1,21 @@
-defmodule Firenest.PG do
+defmodule Firenest.ReplicatedState do
+  @moduledoc """
+  Facility for replicating ephemeral state across cluster.
+
+  Allows registering some state attached to aprocess and replicated
+  across cluster. The state is always linked to a liftetime of a
+  process - when the process dies the state will be removed on all
+  nodes and in case nodes get disconnected, all the state from
+  disconnected nodes will be (temporarily) removed. The state
+  can be only updated from the node where the process lives.
+
+  The state is managed through callbacks that are invoked on the
+  node where the process lives and remotely on other nodes.
+  """
   alias Firenest.SyncedServer
 
-  @type pg() :: atom()
-  @type group() :: term()
+  @type server() :: atom()
+  @type key() :: term()
   @type value() :: term()
 
   @doc """
@@ -16,24 +29,24 @@ defmodule Firenest.PG do
       nodes, defaults to 50 ms;
 
   """
-  defdelegate child_spec(opts), to: Firenest.PG.Supervisor
+  defdelegate child_spec(opts), to: Firenest.ReplicatedState.Supervisor
 
-  @spec join(pg(), group(), pid(), value()) :: :ok | {:error, :already_joined}
-  def join(pg, group, pid, value) when node(pid) == node() do
-    server = partition_info!(pg, group)
-    SyncedServer.call(server, {:join, group, pid, value})
+  @spec join(server(), key(), pid(), value()) :: :ok | {:error, :already_joined}
+  def join(server, key, pid, value) when node(pid) == node() do
+    partition = partition_info!(server, key)
+    SyncedServer.call(partition, {:join, key, pid, value})
   end
 
-  @spec leave(pg(), group(), pid()) :: :ok | {:error, :not_member}
-  def leave(pg, group, pid) when node(pid) == node() do
-    server = partition_info!(pg, group)
-    SyncedServer.call(server, {:leave, group, pid})
+  @spec leave(server(), key(), pid()) :: :ok | {:error, :not_member}
+  def leave(server, key, pid) when node(pid) == node() do
+    partition = partition_info!(server, key)
+    SyncedServer.call(partition, {:leave, key, pid})
   end
 
-  @spec leave(pg(), pid()) :: :ok | {:error, :not_member}
-  def leave(pg, pid) when node(pid) == node() do
-    servers = partition_infos!(pg)
-    replies = multicall(servers, {:leave, pid}, 5_000)
+  @spec leave(server(), pid()) :: :ok | {:error, :not_member}
+  def leave(server, pid) when node(pid) == node() do
+    partitions = partition_infos!(server)
+    replies = multicall(partitions, {:leave, pid}, 5_000)
 
     if :ok in replies do
       :ok
@@ -42,26 +55,26 @@ defmodule Firenest.PG do
     end
   end
 
-  @spec update(pg(), group(), pid(), (value() -> value())) :: :ok | {:error, :not_member}
-  def update(pg, group, pid, update) when node(pid) == node() and is_function(update, 1) do
-    server = partition_info!(pg, group)
-    SyncedServer.call(server, {:update, group, pid, update})
+  @spec update(server(), key(), pid(), (value() -> value())) :: :ok | {:error, :not_member}
+  def update(server, key, pid, update) when node(pid) == node() and is_function(update, 1) do
+    partition = partition_info!(server, key)
+    SyncedServer.call(partition, {:update, key, pid, update})
   end
 
-  @spec replace(pg(), group(), pid(), value()) :: :ok | {:error, :not_member}
-  def replace(pg, group, pid, value) when node(pid) == node() do
-    server = partition_info!(pg, group)
-    SyncedServer.call(server, {:replace, group, pid, value})
+  @spec replace(server(), key(), pid(), value()) :: :ok | {:error, :not_member}
+  def replace(server, key, pid, value) when node(pid) == node() do
+    partition = partition_info!(server, key)
+    SyncedServer.call(partition, {:replace, key, pid, value})
   end
 
-  @spec members(pg(), group()) :: [value()]
-  def members(pg, group) do
-    server = partition_info!(pg, group)
-    SyncedServer.call(server, {:members, group}).()
+  @spec members(server(), key()) :: [value()]
+  def members(server, key) do
+    partition = partition_info!(server, key)
+    SyncedServer.call(partition, {:members, key}).()
   end
 
   # TODO
-  # def dirty_list(pg, group)
+  # def dirty_list(server, group)
 
   defp multicall(servers, request, timeout) do
     servers
@@ -87,26 +100,26 @@ defmodule Firenest.PG do
     end)
   end
 
-  defp partition_info!(pg, group) do
-    hash = :erlang.phash2(group)
+  defp partition_info!(server, key) do
+    hash = :erlang.phash2(key)
     extract = {:element, {:+, {:rem, {:const, hash}, :"$1"}, 1}, :"$2"}
     ms = [{{:partitions, :"$1", :"$2"}, [], [extract]}]
-    [info] = :ets.select(pg, ms)
+    [info] = :ets.select(server, ms)
     info
   catch
     :error, :badarg ->
-      raise ArgumentError, "unknown group: #{inspect(pg)}"
+      raise ArgumentError, "unknown key: #{inspect(server)}"
   end
 
-  defp partition_infos!(pg) do
-    Tuple.to_list(:ets.lookup_element(pg, :partitions, 3))
+  defp partition_infos!(server) do
+    Tuple.to_list(:ets.lookup_element(server, :partitions, 3))
   catch
     :error, :badarg ->
-      raise ArgumentError, "unknown group: #{inspect(pg)}"
+      raise ArgumentError, "unknown group: #{inspect(server)}"
   end
 end
 
-defmodule Firenest.PG.Supervisor do
+defmodule Firenest.ReplicatedState.Supervisor do
   @moduledoc false
   use Supervisor
 
@@ -131,7 +144,7 @@ defmodule Firenest.PG.Supervisor do
 
     children =
       for name <- names,
-          do: {Firenest.PG.Server, {name, topology, opts}}
+          do: {Firenest.ReplicatedState.Server, {name, topology, opts}}
 
     :ets.new(name, [:named_table, :set, read_concurrency: true])
     :ets.insert(name, {:partitions, partitions, List.to_tuple(names)})
@@ -140,7 +153,7 @@ defmodule Firenest.PG.Supervisor do
   end
 end
 
-defmodule Firenest.PG.Server do
+defmodule Firenest.ReplicatedState.Server do
   @moduledoc false
   use Firenest.SyncedServer
 
@@ -178,25 +191,25 @@ defmodule Firenest.PG.Server do
   def handshake_data(%{clock: clock}), do: clock
 
   @impl true
-  def handle_call({:join, group, pid, value}, _from, state) do
+  def handle_call({:join, key, pid, value}, _from, state) do
     %{values: values, pids: pids} = state
     Process.link(pid)
-    key = {group, pid}
+    ets_key = {key, pid}
 
-    if :ets.member(values, key) do
+    if :ets.member(values, ets_key) do
       {:reply, {:error, :already_joined}, state}
     else
-      :ets.insert(values, {key, value})
-      :ets.insert(pids, key)
-      state = schedule_broadcast_events(state, [{:join, group, pid, value}])
+      :ets.insert(values, {ets_key, value})
+      :ets.insert(pids, ets_key)
+      state = schedule_broadcast_events(state, [{:join, key, pid, value}])
       {:reply, :ok, state}
     end
   end
 
-  def handle_call({:leave, group, pid}, _from, state) do
+  def handle_call({:leave, key, pid}, _from, state) do
     %{values: values, pids: pids} = state
-    key = {group, pid}
-    ms = [{key, [], [true]}]
+    ets_key = {key, pid}
+    ms = [{ets_key, [], [true]}]
 
     case :ets.select_delete(pids, ms) do
       0 ->
@@ -207,21 +220,21 @@ defmodule Firenest.PG.Server do
           Process.unlink(pid)
         end
 
-        :ets.delete(values, key)
-        state = schedule_broadcast_events(state, [{:leave, group, pid}])
+        :ets.delete(values, ets_key)
+        state = schedule_broadcast_events(state, [{:leave, key, pid}])
         {:reply, :ok, state}
     end
   end
 
-  def handle_call({:update, group, pid, update}, _from, state) do
+  def handle_call({:update, key, pid, update}, _from, state) do
     %{values: values} = state
-    key = {group, pid}
+    ets_key = {key, pid}
 
-    case ets_fetch_element(values, key, 2) do
+    case ets_fetch_element(values, ets_key, 2) do
       {:ok, value} ->
         new_value = update.(value)
-        :ets.insert(values, {key, new_value})
-        state = schedule_broadcast_events(state, [{:replace, group, pid, new_value}])
+        :ets.insert(values, {ets_key, new_value})
+        state = schedule_broadcast_events(state, [{:replace, key, pid, new_value}])
         {:reply, :ok, state}
 
       :error ->
@@ -229,13 +242,13 @@ defmodule Firenest.PG.Server do
     end
   end
 
-  def handle_call({:replace, group, pid, value}, _from, state) do
+  def handle_call({:replace, key, pid, value}, _from, state) do
     %{values: values} = state
-    key = {group, pid}
+    ets_key = {key, pid}
 
-    if :ets.member(values, key) do
-      :ets.insert(values, {key, value})
-      state = schedule_broadcast_events(state, [{:replace, group, pid, value}])
+    if :ets.member(values, ets_key) do
+      :ets.insert(values, {ets_key, value})
+      state = schedule_broadcast_events(state, [{:replace, key, pid, value}])
       {:reply, :ok, state}
     else
       {:reply, {:error, :not_member}, state}
@@ -256,12 +269,12 @@ defmodule Firenest.PG.Server do
     end
   end
 
-  def handle_call({:members, group}, _from, state) do
+  def handle_call({:members, key}, _from, state) do
     %{values: values} = state
 
     read = fn ->
-      local = {{{group, :_}, :"$1"}, [], [:"$1"]}
-      remote = {{{group, :_}, :_, :"$1"}, [], [:"$1"]}
+      local = {{{key, :_}, :"$1"}, [], [:"$1"]}
+      remote = {{{key, :_}, :_, :"$1"}, [], [:"$1"]}
       :ets.select(values, [local, remote])
     end
 
@@ -354,9 +367,9 @@ defmodule Firenest.PG.Server do
         :error
 
       list ->
-        ms = for key <- list, do: {{key, :_}, [], [true]}
+        ms = for ets_key <- list, do: {{ets_key, :_}, [], [true]}
         :ets.select_delete(values, ms)
-        leaves = for {group, pid} <- list, do: {:leave, group, pid}
+        leaves = for {key, pid} <- list, do: {:leave, key, pid}
         {:ok, leaves}
     end
   end
@@ -396,16 +409,16 @@ defmodule Firenest.PG.Server do
   defp handle_events(%{values: values} = state, from, events) do
     {joins, leaves} =
       Enum.reduce(events, {[], []}, fn
-        {:leave, group, pid}, {joins, leaves} ->
-          leave = {{{group, pid}, from, :_}, [], [true]}
+        {:leave, key, pid}, {joins, leaves} ->
+          leave = {{{key, pid}, from, :_}, [], [true]}
           {joins, [leave | leaves]}
 
-        {:replace, group, pid, value}, {joins, leaves} ->
-          join = {{group, pid}, from, value}
+        {:replace, key, pid, value}, {joins, leaves} ->
+          join = {{key, pid}, from, value}
           {[join | joins], leaves}
 
-        {:join, group, pid, value}, {joins, leaves} ->
-          join = {{group, pid}, from, value}
+        {:join, key, pid, value}, {joins, leaves} ->
+          join = {{key, pid}, from, value}
           {[join | joins], leaves}
       end)
 
@@ -420,7 +433,7 @@ defmodule Firenest.PG.Server do
   defp handle_state_transfer(%{values: values} = state, from, clock, transfer) do
     %{remote_clocks: remote_clocks} = state
     delete_ms = [{{:_, from, :_}, [], [true]}]
-    inserts = for {key, value} <- transfer, do: {key, from, value}
+    inserts = for {ets_key, value} <- transfer, do: {ets_key, from, value}
     :ets.select_delete(values, delete_ms)
     :ets.insert(values, inserts)
     %{state | remote_clocks: %{remote_clocks | from => clock}}
