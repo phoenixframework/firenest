@@ -164,7 +164,7 @@ defmodule Firenest.PG.Server do
 
     {:ok,
      %{
-       values: values,
+       values: ets_whereis(values),
        pids: pids,
        broadcast_timer: nil,
        broadcast_timeout: broadcast_timeout,
@@ -427,8 +427,14 @@ defmodule Firenest.PG.Server do
   end
 
   # TODO: handle catch-up with events
-  defp catch_up_reply(%{values: values}, _clock) do
+  defp catch_up_reply(%{values: values}, clock) do
     local_ms = [{{:"$1", :"$2"}, [], [{{:"$1", :"$2"}}]}]
-    {:state_transfer, :ets.select(values, local_ms)}
+    {:state_transfer, {clock, :ets.select(values, local_ms)}}
+  end
+
+  if function_exported?(:ets, :whereis, 1) do
+    defp ets_whereis(table), do: :ets.whereis(table)
+  else
+    defp ets_whereis(table), do: table
   end
 end

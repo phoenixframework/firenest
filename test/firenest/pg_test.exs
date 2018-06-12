@@ -139,11 +139,12 @@ defmodule Firenest.PGTest do
   end
 
   defmodule Distributed do
-    use ExUnit.Case, async: true
+    # We modify test topology, it can't be async
+    use ExUnit.Case
 
     setup_all do
       wait_until(fn -> Process.whereis(:firenest_topology_setup) == nil end)
-      nodes = [:"first@127.0.0.1", :"second@127.0.0.1"]
+      nodes = [:"first@127.0.0.1", :"second@127.0.0.1", :"third@127.0.0.1"]
       topology = Firenest.Test
       pg = Firenest.Test.PG
       %{start: start} = PG.child_spec(name: pg, topology: topology)
@@ -158,19 +159,74 @@ defmodule Firenest.PGTest do
     end
 
     test "remote join is propagated", config do
-      %{topology: topology, evaluator: evaluator, pg: pg, group: group, nodes: [second]} = config
+      %{pg: pg, group: group, nodes: [second | _]} = config
 
-      cmd =
-        quote do
-          spawn(fn ->
-            :ok = PG.join(unquote(pg), unquote(group), self(), :baz)
-            :timer.sleep(:infinity)
-          end)
-        end
-
-      T.send(topology, second, evaluator, {:eval_quoted, cmd})
+      quote do
+        spawn(fn ->
+          :ok = PG.join(unquote(pg), unquote(group), self(), :baz)
+          :timer.sleep(:infinity)
+        end)
+      end
+      |> eval_on_node(second, config)
 
       wait_until(fn -> PG.members(pg, group) == [:baz] end)
+    end
+
+    test "propages changes when nodes were disconnected", config do
+      %{topology: topology, pg: pg, test: test, nodes: [second, third]} = config
+      Process.register(self(), test)
+
+      quote do
+        spawn(fn ->
+          Process.register(self(), unquote(test))
+          :ok = PG.join(unquote(pg), unquote(test), self(), :baz)
+          Process.sleep(:infinity)
+        end)
+      end
+      |> eval_on_node(second, config)
+
+      quote(do: PG.members(unquote(pg), unquote(test)) == [:baz])
+      |> await_on_node(third, config)
+
+      quote do
+        T.disconnect(unquote(topology), elem(unquote(third), 0))
+        pid = Process.whereis(unquote(test))
+        :ok = PG.leave(unquote(pg), unquote(test), pid)
+
+        spawn(fn ->
+          :ok = PG.join(unquote(pg), unquote(test), self(), :bar)
+          Process.sleep(:infinity)
+        end)
+      end
+      |> eval_on_node(second, config)
+
+      quote(do: PG.members(unquote(pg), unquote(test)) == [])
+      |> await_on_node(third, config)
+
+      quote(do: T.connect(unquote(topology), elem(unquote(third), 0)))
+      |> eval_on_node(second, config)
+
+      quote(do: PG.members(unquote(pg), unquote(test)) == [:bar])
+      |> await_on_node(third, config)
+    end
+
+    defp eval_on_node(quoted, node, config) do
+      %{topology: topology, evaluator: evaluator} = config
+
+      T.send(topology, node, evaluator, {:eval_quoted, quoted})
+    end
+
+    defp await_on_node(quoted, node, config) do
+      %{topology: topology} = config
+      {:registered_name, name} = Process.info(self(), :registered_name)
+
+      quote do
+        wait_until(fn -> unquote(quoted) end)
+        T.broadcast(unquote(topology), unquote(name), :continue)
+      end
+      |> eval_on_node(node, config)
+
+      assert_receive :continue
     end
   end
 end

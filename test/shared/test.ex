@@ -25,6 +25,11 @@ defmodule Firenest.Test do
     def handle_info({:eval_quoted, quoted}, state) do
       Code.eval_quoted(quoted)
       {:noreply, state}
+    catch
+      kind, reason ->
+        exception = Exception.format(kind, reason, System.stacktrace())
+        Logger.error("Eval failed on node #{inspect node()}\n#{exception}")
+        {:noreply, state}
     end
 
     def handle_info(_, state) do
@@ -84,19 +89,11 @@ defmodule Firenest.Test do
 
     spawn_link(fn ->
       Process.register(self(), __MODULE__.Reporter)
-      forward(parent)
+      :slave.relay(parent)
     end)
 
     multirpc(nodes, :slave, :pseudo, [node(), [__MODULE__.Reporter]])
     :ok
-  end
-
-  defp forward(parent) do
-    receive do
-      msg -> send(parent, msg)
-    end
-
-    forward(parent)
   end
 
   @doc """

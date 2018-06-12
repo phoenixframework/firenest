@@ -11,7 +11,7 @@ defmodule Firenest.TestHelpers do
   @doc """
   Waits until fun is true `count * 10` milliseconds.
   """
-  def wait_until(fun, count \\ 1000) do
+  def wait_until(fun, count \\ div(Application.fetch_env!(:ex_unit, :assert_receive_timeout), 10)) do
     cond do
       count == 0 ->
         raise "waited until fun returned true but it never did"
