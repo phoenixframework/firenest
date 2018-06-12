@@ -34,3 +34,6 @@ Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_do
 and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
 be found at [https://hexdocs.pm/firenest](https://hexdocs.pm/firenest).
 
+## Contributing
+
+To talk about development of Firenest, you can join the [##firenest](http://webchat.freenode.net/?channels=##firenest) channel on [freenode](https://freenode.net/).
