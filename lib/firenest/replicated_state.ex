@@ -16,33 +16,158 @@ defmodule Firenest.ReplicatedState do
 
   @type server() :: atom()
   @type key() :: term()
-  @type value() :: term()
+
+  @type local_delta() :: term()
+  @type remote_delta() :: term()
+  @type state() :: term()
+  @type config() :: term()
 
   @doc """
+  Set up new stare for a process.
+
+  The `arg` is received from the corrsponding `join/4` call.
+  Sets up local data for incremental tracking of changes to state and
+  an initial state that will be replicated to remote nodes.
+  """
+  @callback local_join(arg :: term(), config()) ::
+              {initial_delta :: local_delta(), initial_state :: state()}
+
+  @doc """
+  Called whenever the `update/4` function is called for a process.
+
+  It returns updated local delta and updated state.
+
+  This is a good place for broadcasting local state changes.
+  """
+  @callback local_update(update :: term(), local_delta(), state(), config()) ::
+              {local_delta(), state()}
+
+  @doc """
+  Called whenever a local process dies or the `leave/3` or `leave/2` function
+  is called for a process.
+
+  The return value is ignored.
+
+  This is a good place for broadcasting local state changes.
+  """
+  @callback local_leave(state(), config()) :: term()
+
+  @doc """
+  Called whenever the server is about to replicate state to a remote node.
+
+  It takes in the local delta value constructed in the `c:local_update/4`
+  calls and returns a remote delta value that will be replicated to other
+  servers.
+
+  In case the callback is not provided it defaults to just returning local delta.
+  """
+  @callback prepare_remote_delta(local_delta(), config()) :: remote_delta()
+
+  @doc """
+  Called whenever a remote delta is received from another node.
+
+  The `remote_delta` value is the return value of `c:prepare_remote_delta/2`
+  callback. The result of applying the remote delta to state must be
+  extactly the same as the result of applying local updates to the
+  state in the `c:local_update/3` callback.
+  """
+  @callback handle_remote_delta(remote_delta(), state(), config()) :: {:ok, state()} | :noop
+
+  @doc """
+  Called when remote changes are received by the local process.
+
+  It receives a list of observed remote changes for all the tracked keys.
+  A `process_state_change` specifies how the state for a single process changed.
+  In particular the change can be:
+
+    * `{initial_state, [:joined, ...]}` in case the process just joined
+    * `{last_known_state, [..., :left]}` in case the process just left
+    * `{last_known_state, [{:replace, state}, ...]}` in case it was not possible
+      to replicate incremental changes to remote state through deltas and a full
+      state transfer was performed.
+    * `{last_known_state, [..., {:delta, remote_delta}, ...]}` in case
+      incremental changes to the remote state were communicated through the delta
+      mechanism.
+
+  This callback is optional and its behaviour depends on the value
+  of the `:remote_changes` option when starting the process.
+
+    * `:ignore` - the callback is not invoked and the server skips
+      all operations required for tracking the changes. This is the
+      default and should be chosen if precise state change tracking
+      is not required.
+
+    * `:observe_full` - calls the callback with as precise information
+      about the remote state changes as possible. This means that, for
+      example, for a very short-lived process a `[:joined, :left]` sequence
+      of changes is possible.
+
+    * `:observe_collapsed` - collapses the information about remote state
+      changes. For example a `[:joined, {:delta, ...}]` sequence is collapsed
+      into just `[:joined]` with all the state changes alrady applied and a
+      `[{:delta, ...}, :left]` sequence is collapsed into just `[:left]`.
+      This also means that for short-lived processes, no information
+      may be transfered if the chnages would contain both `:joined` and `:left`.
+
+  This is a good place for broadcasting remote state changes.
+
+  The return value is ignored.
+  """
+  @callback observe_remote_changes(observed_remote_changes, config()) :: term()
+            when observed_remote_changes: [{key(), [process_state_change]}],
+                 process_state_change: {current_state :: state(), [change]},
+                 change:
+                   :joined | {:replace, new_state :: state()} | {:delta, remote_delta()} | :left
+
+  @optional_callbacks [observe_remote_changes: 2, prepare_remote_delta: 2]
+
+  @doc """
+  Returns a child spec for the replicated state server.
 
   ## Options
 
     * `:name` - name for the process, required;
     * `:topology` - name of the supporting topology, required;
     * `:partitions` - number of partitions, defaults to 1;
-    * `:broadcast_timeout` - delay of broadcasting local events to other
-      nodes, defaults to 50 ms;
+    * `:broadcast_timeout` - delay of broadcasting local events to other nodes,
+      defaults to 50 ms;
+    * `:remote_changes` - specifies behaviour of the `c:observe_remote_changes/2`
+      callback and can be `:observe_full | :observe_collapsed | :ignore`,
+      defaults to `:ignore`;
+    * `:config` - constant value passed to all callbacks, defaults to `nil`;
 
   """
   defdelegate child_spec(opts), to: Firenest.ReplicatedState.Supervisor
 
-  @spec join(server(), key(), pid(), value()) :: :ok | {:error, :already_joined}
-  def join(server, key, pid, value) when node(pid) == node() do
+  @doc """
+  Registeres process `pid` under `key` and starts tracking its state.
+
+  This calls the `c:local_join/2` callback with `arg` inside the server.
+  """
+  @spec join(server(), key(), pid(), term()) :: :ok | {:error, :already_joined}
+  def join(server, key, pid, arg) when node(pid) == node() do
     partition = partition_info!(server, key)
-    SyncedServer.call(partition, {:join, key, pid, value})
+    SyncedServer.call(partition, {:join, key, pid, arg})
   end
 
+  @doc """
+  Unregisteres process `pid` from `key` and removes its state.
+
+  This calls the `c:local_leave/2` callback inside the server.
+  """
   @spec leave(server(), key(), pid()) :: :ok | {:error, :not_member}
   def leave(server, key, pid) when node(pid) == node() do
     partition = partition_info!(server, key)
     SyncedServer.call(partition, {:leave, key, pid})
   end
 
+  @doc """
+  Unregisteres process `pid` from all keys it's registered under and
+  removes all its state.
+
+  This calls the `c:local_leave/2` callback inside the server for
+  each key the proess is leaving.
+  """
   @spec leave(server(), pid()) :: :ok | {:error, :not_member}
   def leave(server, pid) when node(pid) == node() do
     partitions = partition_infos!(server)
@@ -55,22 +180,25 @@ defmodule Firenest.ReplicatedState do
     end
   end
 
-  @spec update(server(), key(), pid(), (value() -> value())) :: :ok | {:error, :not_member}
-  def update(server, key, pid, update) when node(pid) == node() and is_function(update, 1) do
+  @doc """
+  Updates state of process `pid` under `key`.
+
+  This calls the `c:local_update/4` callback inside the server passing
+  the value of `update`.
+  """
+  @spec update(server(), key(), pid(), term()) :: :ok | {:error, :not_member}
+  def update(server, key, pid, update) when node(pid) == node() do
     partition = partition_info!(server, key)
     SyncedServer.call(partition, {:update, key, pid, update})
   end
 
-  @spec replace(server(), key(), pid(), value()) :: :ok | {:error, :not_member}
-  def replace(server, key, pid, value) when node(pid) == node() do
+  @doc """
+  Lists all registered states for a given `key`.
+  """
+  @spec list(server(), key()) :: [state()]
+  def list(server, key) do
     partition = partition_info!(server, key)
-    SyncedServer.call(partition, {:replace, key, pid, value})
-  end
-
-  @spec members(server(), key()) :: [value()]
-  def members(server, key) do
-    partition = partition_info!(server, key)
-    SyncedServer.call(partition, {:members, key}).()
+    SyncedServer.call(partition, {:list, key}).()
   end
 
   # TODO

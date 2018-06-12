@@ -28,7 +28,7 @@ defmodule Firenest.Test do
     catch
       kind, reason ->
         exception = Exception.format(kind, reason, System.stacktrace())
-        Logger.error("Eval failed on node #{inspect node()}\n#{exception}")
+        Logger.error("Eval failed on node #{inspect(node())}\n#{exception}")
         {:noreply, state}
     end
 
