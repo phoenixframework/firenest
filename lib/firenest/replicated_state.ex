@@ -46,36 +46,33 @@ defmodule Firenest.ReplicatedState do
   @doc """
   Called whenever the `put/4` function is called to create a new state.
 
-  The `arg` is received from the corresponding `put/4` call.
-  For explanation of the `delayed_update` return value see the
-  `c:local_update/4` callback.
+  The `arg` is received from the corresponding `put/4` call. For the
+  explanation of the `delayed_update` and `:delete` return values see
+  the `c:local_update/4` callback.
 
   This is a good place for broadcasting local state changes.
   """
   @callback local_put(arg :: term(), config()) ::
-              {:ok, initial_state :: state()}
-              | {:ok, initial_state :: state(), delayed_update()}
+              {:ok, initial_state} | {:ok, initial_state, delayed_update() | :delete}
+            when initial_state: state
 
   @doc """
   Called whenever the `update/4` function is called to update a state.
 
-  It returns updated local delta and updated state. It can also return
-  a `{:delete, state}` tuple to indicate the state should be deleted.
-  This will trigger a call to the `c:local_delete/2` callback.
-
   This is a good place for broadcasting local state changes.
 
-  ## Delayed update
+  ## Delayed update and delete
 
-  If the function returns a fourth element in the `:updated` tuple
-  consisting of `{timeout, update}`, a timer is started by the server
-  and the `c:local_update/4` callback will be called with the `update`
-  value after `timeout` milliseconds.
+  If the function returns a third element in the tuple consisting of
+  `{timeout, update}`, a timer is started by the server and the
+  `c:local_update/4` callback will be called with the `update` value
+  after `timeout` milliseconds.
+
+  If the third element is `:delete`, the state will be immediately
+  deleted and the `c:local_delete/2` callback triggered.
   """
   @callback local_update(update :: term(), local_delta(), state(), config()) ::
-              {:updated, local_delta(), state()}
-              | {:updated, local_delta(), state(), delayed_update()}
-              | {:delete, state()}
+              {local_delta(), state()} | {local_delta(), state(), delayed_update() | :delete}
 
   @doc """
   Called whenever attached process dies or the `delete/3` or `delete/2`
