@@ -323,7 +323,7 @@ defmodule Firenest.SyncedServerTest do
     use ExUnit.Case, async: true
 
     setup_all do
-      wait_until(fn -> Process.whereis(:firenest_topology_setup) == nil end)
+      wait_until(fn -> Process.whereis(:firenest_topology_setup) == nil end, 500)
       nodes = [:"first@127.0.0.1", :"second@127.0.0.1"]
       topology = Firenest.Test
       nodes = for {name, _} = ref <- T.nodes(topology), name in nodes, do: ref
