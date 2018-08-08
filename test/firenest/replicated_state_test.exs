@@ -20,13 +20,13 @@ defmodule Firenest.ReplicatedStateTest do
     test "adds process", %{server: server} do
       parent = self()
 
-      fun = fn config ->
-        send(parent, {:local_put, config})
-        {:ok, 1}
+      fun = fn delta, config ->
+        send(parent, {:local_put, delta, config})
+        {delta + 1, 1}
       end
 
       assert R.put(server, :foo, self(), fun) == :ok
-      assert_received {:local_put, _}
+      assert_received {:local_put, 0, _}
 
       assert [1] == R.list(server, :foo)
     end
@@ -66,18 +66,18 @@ defmodule Firenest.ReplicatedStateTest do
     test "immediately deletes with :delete return", %{server: server} do
       parent = self()
 
-      fun = fn config ->
-        send(parent, {:local_put, config})
+      fun = fn delta, config ->
+        send(parent, {:local_put, delta, config})
 
         delete = fn config ->
           send(parent, {:local_delete, config})
         end
 
-        {:ok, delete, :delete}
+        {delta + 1, delete, :delete}
       end
 
       assert R.put(server, :foo, self(), fun) == :ok
-      assert_received {:local_put, _}
+      assert_received {:local_put, 0, _}
       assert_received {:local_delete, _}
 
       assert [] == R.list(server, :foo)
@@ -86,19 +86,19 @@ defmodule Firenest.ReplicatedStateTest do
     test "updates on a timeout with :update_after return", %{server: server} do
       parent = self()
 
-      fun = fn config ->
-        send(parent, {:local_put, config})
+      fun = fn delta, config ->
+        send(parent, {:local_put, delta, config})
 
         update = fn delta, state, config ->
           send(parent, {:local_update, delta, state, config})
           {delta + 1, state + 1}
         end
 
-        {1, 1, {:update_after, update, 50}}
+        {delta + 1, 1, {:update_after, update, 50}}
       end
 
       assert R.put(server, :foo, self(), fun) == :ok
-      assert_received {:local_put, _}
+      assert_received {:local_put, 0, _}
       refute_received {:local_update, _, _, _}
       assert [1] == R.list(server, :foo)
 
@@ -115,7 +115,7 @@ defmodule Firenest.ReplicatedStateTest do
         send(parent, {:local_delete, config})
       end
 
-      R.put(server, :foo, self(), fn _ -> {:ok, fun} end)
+      R.put(server, :foo, self(), fn delta, _ -> {delta, fun} end)
 
       assert [_] = R.list(server, :foo)
       assert R.delete(server, self()) == :ok
@@ -142,7 +142,7 @@ defmodule Firenest.ReplicatedStateTest do
         send(parent, {:local_delete, config})
       end
 
-      R.put(server, :foo, self(), fn _ -> {:ok, fun} end)
+      R.put(server, :foo, self(), fn delta, _ -> {delta, fun} end)
       assert [_] = R.list(server, :foo)
 
       assert R.delete(server, :foo, self()) == :ok
@@ -183,7 +183,7 @@ defmodule Firenest.ReplicatedStateTest do
       end
 
       assert R.update(server, :foo, self(), fun) == :ok
-      assert_received {:local_update, 1, 1, _}
+      assert_received {:local_update, 0, 1, _}
       assert [2] = R.list(server, :foo)
     end
 
@@ -215,7 +215,7 @@ defmodule Firenest.ReplicatedStateTest do
       end
 
       assert R.update(server, :foo, self(), fun) == :ok
-      assert_received {:local_update, 1, 1, _}
+      assert_received {:local_update, 0, 1, _}
       assert_received {:local_delete, _}
 
       assert [] == R.list(server, :foo)
@@ -239,11 +239,11 @@ defmodule Firenest.ReplicatedStateTest do
       end
 
       assert R.update(server, :foo, self(), fun) == :ok
-      assert_received {:local_update, 1, 1, _}
+      assert_received {:local_update, 0, 1, _}
       refute_received {:local_update, _, _, _}
       assert [2] == R.list(server, :foo)
 
-      assert_receive {:local_update, 2, 2, _}
+      assert_receive {:local_update, 1, 2, _}
       assert [3] == R.list(server, :foo)
     end
   end

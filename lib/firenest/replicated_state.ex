@@ -37,12 +37,12 @@ defmodule Firenest.ReplicatedState do
   @doc """
   Called when a partition starts up.
 
-  It returns an immutable `config` value that will be passed to
+  It returns an `initial_delta` that will be passed to `c:local_put/3`
+  callback on new entries and to `c:local_update/4` after remote
+  broadcast resets the local delta.
+  It also returns an immutable `config` value that will be passed to
   all callbacks.
   """
-  # TODO: initial delta is returned here and passed to local_put.
-  # The reason: when we reset the local delta after broadcast, we'd
-  # need to store the initial_delta for each data point separately
   @callback init(opts :: keyword()) :: {initial_delta :: local_delta(), config()}
 
   @doc """
@@ -52,16 +52,23 @@ defmodule Firenest.ReplicatedState do
   explanation of the `extra_action` return values see the
   `c:local_update/4` callback.
 
+  The value of `local_delta` argument is always the initial delta as
+  returned by the `init/1` callback.
+
   This is a good place for broadcasting local state changes.
   """
-  @callback local_put(arg :: term(), config()) ::
-              {initial_delta, initial_state} | {initial_delta, initial_state, extra_action()}
-            when initial_delta: local_delta(), initial_state: state()
+  @callback local_put(arg :: term(), local_delta(), config()) ::
+              {local_delta(), initial_state} | {local_delta(), initial_state, extra_action()}
+            when initial_state: state()
 
   @doc """
   Called whenever the `update/4` function is called to update a state.
 
   This is a good place for broadcasting local state changes.
+
+  The `local_delta` argument is either the accumulated delta from
+  `c:local_put/3` and `c:local_update/4` calls or the initial delta
+  from `c:init/1` after remote broadcast resets the local delta.
 
   ## Delayed update and delete
 
@@ -349,12 +356,13 @@ defmodule Firenest.ReplicatedState.Server do
     store = Store.new(name)
     broadcast_timeout = Keyword.get(opts, :broadcast_timeout, 50)
 
-    config = handler.init(opts)
+    {initial_delta, config} = handler.init(opts)
 
     {:ok,
      %{
        store: store,
        config: config,
+       initial_delta: initial_delta,
        handler: handler,
        broadcast_timer: nil,
        broadcast_timeout: broadcast_timeout,
@@ -579,9 +587,9 @@ defmodule Firenest.ReplicatedState.Server do
   end
 
   defp local_put(arg, key, pid, state) do
-    %{handler: handler, config: config} = state
+    %{handler: handler, config: config, initial_delta: delta} = state
 
-    case handler.local_put(arg, config) do
+    case handler.local_put(arg, delta, config) do
       {delta, value} ->
         {:put, value, delta, state}
 

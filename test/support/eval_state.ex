@@ -7,14 +7,14 @@ defmodule Firenest.Test.EvalState do
   end
 
   @impl true
-  def local_put(fun, config) when is_function(fun, 1), do: fun.(config)
-  def local_put(data, _config), do: {data, data}
+  def local_put(fun, delta, config) when is_function(fun), do: fun.(delta, config)
+  def local_put(data, delta, _config), do: {delta, data}
 
   @impl true
-  def local_delete(fun, config) when is_function(fun, 1), do: fun.(config)
+  def local_delete(fun, config) when is_function(fun), do: fun.(config)
   def local_delete(_data, _config), do: :ok
 
   @impl true
-  def local_update(fun, delta, state, config) when is_function(fun, 3),
+  def local_update(fun, delta, state, config) when is_function(fun),
     do: fun.(delta, state, config)
 end
