@@ -3,7 +3,7 @@ defmodule Firenest.ReplicatedState.Server do
   use Firenest.SyncedServer
 
   alias Firenest.SyncedServer
-  alias Firenest.ReplicatedState.Store
+  alias Firenest.ReplicatedState.{Store, Remote}
 
   def child_spec({name, topology, handler, opts}) do
     server_opts = [name: name, topology: topology]
@@ -19,7 +19,8 @@ defmodule Firenest.ReplicatedState.Server do
     Process.flag(:trap_exit, true)
     store = Store.new(name)
     broadcast_timeout = Keyword.get(opts, :broadcast_timeout, 50)
-
+    remote_changes = Keyword.get(opts, :remote_changes, :ignore)
+    remote = Remote.new(remote_changes)
     {initial_delta, config} = handler.init(opts)
 
     {:ok,
@@ -30,8 +31,8 @@ defmodule Firenest.ReplicatedState.Server do
        handler: handler,
        broadcast_timer: nil,
        broadcast_timeout: broadcast_timeout,
+       remote: remote,
        clock: 0,
-       remote_clocks: %{},
        pending_events: []
      }}
   end

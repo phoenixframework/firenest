@@ -2,8 +2,8 @@ defmodule Firenest.ReplicatedState.Store do
   defstruct [:values, :pids]
 
   def new(name) do
-    values = :ets.new(name, [:named_table, :protected, :ordered_set])
-    pids = :ets.new(__MODULE__.Pids, [:duplicate_bag, keypos: 2])
+    values = :ets.new(name, [:named_table, :protected, :ordered_set, read_concurrency: true])
+    pids = :ets.new(__MODULE__.Pids, [:private, :duplicate_bag, keypos: 2])
 
     %__MODULE__{values: ets_whereis(values), pids: pids}
   end
