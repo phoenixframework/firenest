@@ -55,6 +55,9 @@ defmodule Firenest.SyncedServer do
   @doc """
   Invoked to handle messages sent with `remote_send/2` and `remote_broadcast/1`.
 
+  When node A messages node B, node B will ignore the message from node A unless
+  `c:handle_replica/3` has been invoked with the `:up` instruction for node A.
+
   If not implemented, the server will crash on unexpected messages.
 
   See `c:handle_info/2` for explanation of return values.
@@ -72,7 +75,7 @@ defmodule Firenest.SyncedServer do
   was exchanged between replicas and the remote replica is
   ready to receive messages.
 
-  If not implemented, the server will ignore unexpected messages.
+  If not implemented, it is equivalent to returning `{:noreply, new_state}`.
 
   See `c:handle_info/2` for explanation of return values.
   """
