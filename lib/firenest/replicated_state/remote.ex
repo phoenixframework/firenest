@@ -162,7 +162,7 @@ defmodule Firenest.ReplicatedState.Remote do
   end
 
   defp prepare_deltas(:ignore, pending, prepare) do
-    prepare_ignore_deltas(pending, [], [], [], prepare)
+    prepare_ignore_deltas(Map.to_list(pending), [], [], [], prepare)
   end
 
   defp prepare_ignore_deltas([], puts, updates, deletes, _prepare) do
