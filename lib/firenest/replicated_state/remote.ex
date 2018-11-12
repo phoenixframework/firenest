@@ -1,11 +1,11 @@
 defmodule Firenest.ReplicatedState.Remote do
-  defstruct pending: %{}, clocks: %{}, clock: 0, tag: nil, deltas: %{}
+  defstruct pending: %{}, clocks: %{}, clock: 0, tag: nil, deltas: %{}, broadcast: nil
 
   # TODO: some protocol for requesting more of a state, even from other nodes
   # on first up, so we don't need to go to each node separately.
 
-  def new(:ignore) do
-    %__MODULE__{tag: :ignore}
+  def new(:ignore, broadcast) do
+    %__MODULE__{tag: :ignore, broadcast: broadcast}
   end
 
   def clock(%__MODULE__{clock: clock}), do: clock
@@ -55,9 +55,10 @@ defmodule Firenest.ReplicatedState.Remote do
     end
   end
 
-  def broadcast(%__MODULE__{pending: pending, clock: clock, tag: tag} = state, prepare_delta) do
+  def broadcast(%__MODULE__{} = state, prepare_delta) do
+    %{pending: pending, clock: clock, tag: tag, broadcast: {:scheduled, broadcast}} = state
     deltas = prepare_deltas(tag, pending, prepare_delta)
-    new_state = %{state | pending: %{}, clock: clock + 1}
+    new_state = %{state | pending: %{}, clock: clock + 1, broadcast: broadcast}
     {{tag, clock, deltas}, new_state}
   end
 
@@ -127,13 +128,15 @@ defmodule Firenest.ReplicatedState.Remote do
     event(state, key, pid, {:update, value, delta})
   end
 
-  defp event(%__MODULE__{pending: pending, tag: tag} = state, key, pid, event) do
+  defp event(%__MODULE__{tag: tag} = state, key, pid, event) do
+    %{pending: pending, broadcast: broadcast} = state
+
     pending =
       case tag do
         :ignore -> event_ignore(pending, key, pid, event)
       end
 
-    %{state | pending: pending}
+    %{state | pending: pending, broadcast: broadcast(broadcast)}
   end
 
   defp event_ignore(pending, key, pid, {:put, value}) do
@@ -181,5 +184,14 @@ defmodule Firenest.ReplicatedState.Remote do
 
   defp handle_ignore_delta({delta_puts, delta_updates, delta_deletes}, puts, updates, deletes) do
     {delta_puts ++ puts, delta_updates ++ updates, delta_deletes ++ deletes}
+  end
+
+  defp broadcast({:scheduled, fun}) do
+    {:scheduled, fun}
+  end
+
+  defp broadcast(fun) do
+    fun.()
+    {:scheduled, fun}
   end
 end

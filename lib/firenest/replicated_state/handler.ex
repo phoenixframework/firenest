@@ -50,4 +50,14 @@ defmodule Firenest.ReplicatedState.Handler do
 
     mod.handle_remote_delta(delta, value, config)
   end
+
+  def prepare_remote_delta_fun(%__MODULE__{} = state) do
+    %{mod: mod, config: config} = state
+
+    if function_exported?(mod, :prepare_remote_delta, 2) do
+      &mod.prepare_remote_delta(&1, config)
+    else
+      &(&1)
+    end
+  end
 end

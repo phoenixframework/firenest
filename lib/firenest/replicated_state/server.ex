@@ -20,9 +20,10 @@ defmodule Firenest.ReplicatedState.Server do
 
     store = Store.new(name)
 
-    broadcast_timeout = Keyword.get(opts, :broadcast_timeout, 50)
     remote_changes = Keyword.get(opts, :remote_changes, :ignore)
-    remote = Remote.new(remote_changes)
+    broadcast_timeout = Keyword.get(opts, :broadcast_timeout, 50)
+    broadcast_fun = fn -> Process.send_after(self(), :broadcast_timeout, broadcast_timeout) end
+    remote = Remote.new(remote_changes, broadcast_fun)
 
     delayed_fun = &Process.send_after(self(), {:update, &1, &2, &3}, &4)
     # The `mode` should be read from init instead of options
@@ -33,8 +34,6 @@ defmodule Firenest.ReplicatedState.Server do
        store: store,
        handler: handler,
        remote: remote,
-       broadcast_timer: nil,
-       broadcast_timeout: broadcast_timeout
      }}
   end
 
@@ -43,20 +42,22 @@ defmodule Firenest.ReplicatedState.Server do
 
   @impl true
   def handle_call({:put, key, pid, arg}, _from, state) do
-    %{store: store, handler: handler} = state
+    %{store: store, handler: handler, remote: remote} = state
 
     link(pid)
 
     unless Store.present?(store, key, pid) do
       case Handler.local_put(handler, arg, key, pid) do
         {:put, value, delta, handler} ->
+          remote = Remote.local_put(remote, key, pid, value)
           store = Store.local_put(store, key, pid, value, delta)
-          {:reply, :ok, %{state | store: store, handler: handler}}
+          {:reply, :ok, %{state | store: store, handler: handler, remote: remote}}
 
         {:delete, value, _delta, handler} ->
-          # TODO: this delta has to propagate remotely before delete
+          remote = Remote.local_put(remote, key, pid, value)
+          remote = Remote.local_delete(remote, key, pid)
           handler = Handler.local_delete(handler, [value])
-          {:reply, :ok, %{state | handler: handler}}
+          {:reply, :ok, %{state | handler: handler, remote: remote}}
       end
     else
       {:reply, {:error, :already_present}, state}
@@ -64,29 +65,30 @@ defmodule Firenest.ReplicatedState.Server do
   end
 
   def handle_call({:update, key, pid, arg}, _from, state) do
-    %{store: store, handler: handler} = state
+    %{store: store, handler: handler, remote: remote} = state
 
     case Store.fetch(store, key, pid) do
       {:ok, value, delta} ->
         case Handler.local_update(handler, arg, key, pid, delta, value) do
           {:put, value, delta, handler} ->
+            remote = Remote.local_update(remote, key, pid, value, delta)
             store = Store.local_update(store, key, pid, value, delta)
-            {:reply, :ok, %{state | store: store, handler: handler}}
+            {:reply, :ok, %{state | store: store, handler: handler, remote: remote}}
 
-          {:delete, value, _delta, handler} ->
-            # TODO: this delta has to propagate remotely before delete
+          {:delete, value, delta, handler} ->
+            remote = Remote.local_update(remote, key, pid, value, delta)
             case Store.local_delete(store, key, pid) do
               # The value returned from update is fresher
               {:ok, _value, store} ->
-                # state = schedule_broadcast_events(state, [{:leave, key, pid}])
+                remote = Remote.local_delete(remote, key, pid)
                 handler = Handler.local_delete(handler, [value])
-                {:reply, :ok, %{state | store: store, handler: handler}}
+                {:reply, :ok, %{state | store: store, handler: handler, remote: remote}}
 
               {:last_member, _value, store} ->
                 unlink_flush(pid)
+                remote = Remote.local_delete(remote, key, pid)
                 handler = Handler.local_delete(handler, [value])
-                # state = schedule_broadcast_events(state, [{:leave, key, pid}])
-                {:reply, :ok, %{state | store: store, handler: handler}}
+                {:reply, :ok, %{state | store: store, handler: handler, remote: remote}}
             end
         end
 
@@ -96,19 +98,19 @@ defmodule Firenest.ReplicatedState.Server do
   end
 
   def handle_call({:delete, key, pid}, _from, state) do
-    %{store: store, handler: handler} = state
+    %{store: store, handler: handler, remote: remote} = state
 
     case Store.local_delete(store, key, pid) do
       {:ok, value, store} ->
-        # state = schedule_broadcast_events(state, [{:leave, key, pid}])
+        remote = Remote.local_delete(remote, key, pid)
         handler = Handler.local_delete(handler, [value])
-        {:reply, :ok, %{state | store: store, handler: handler}}
+        {:reply, :ok, %{state | store: store, handler: handler, remote: remote}}
 
       {:last_member, value, store} ->
         unlink_flush(pid)
+        remote = Remote.local_delete(remote, key, pid)
         handler = Handler.local_delete(handler, [value])
-        # state = schedule_broadcast_events(state, [{:leave, key, pid}])
-        {:reply, :ok, %{state | store: store, handler: handler}}
+        {:reply, :ok, %{state | store: store, handler: handler, remote: remote}}
 
       {:error, store} ->
         {:reply, {:error, :not_present}, %{state | store: store}}
@@ -122,7 +124,7 @@ defmodule Firenest.ReplicatedState.Server do
       {:ok, deletes, store} ->
         unlink_flush(pid)
         handler = Handler.local_delete(handler, deletes)
-        # state = schedule_broadcast_events(state, leaves)
+        # TODO: how do we handle remote in here?
         {:reply, :ok, %{state | store: store, handler: handler}}
 
       {:error, store} ->
@@ -145,7 +147,7 @@ defmodule Firenest.ReplicatedState.Server do
     case Store.local_delete(store, pid) do
       {:ok, leaves, store} ->
         handler = Handler.local_delete(handler, leaves)
-        # state = schedule_broadcast_events(state, leaves)
+        # TODO: how do we handle remote in here?
         {:noreply, %{state | store: store, handler: handler}}
 
       {:error, store} ->
@@ -153,12 +155,14 @@ defmodule Firenest.ReplicatedState.Server do
     end
   end
 
-  # def handle_info({:timeout, timer, :broadcast}, %{broadcast_timer: timer} = state) do
-  #   %{pending_events: events, clock: clock} = state
-  #   clock = clock + 1
-  #   SyncedServer.remote_broadcast({:broadcast, clock, events})
-  #   {:noreply, %{state | clock: clock, pending_events: [], broadcast_timer: nil}}
-  # end
+  def handle_info(:broadcast_timeout, state) do
+    %{remote: remote, handler: handler} = state
+
+    prepare_delta = Handler.prepare_remote_delta_fun(handler)
+    {data, remote} = Remote.broadcast(remote, prepare_delta)
+    SyncedServer.remote_broadcast({:broadcast, data})
+    {:noreply, %{state | remote: remote}}
+  end
 
   def handle_info({:update, key, pid, arg}, state) do
     %{store: store, handler: handler} = state
