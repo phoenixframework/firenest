@@ -1,6 +1,9 @@
 defmodule Firenest.ReplicatedState.Store do
   defstruct [:values, :pids]
 
+  # Common data exchange format:
+  # {{key, pid}, value}
+
   def new(name) do
     values = :ets.new(name, [:named_table, :protected, :ordered_set, read_concurrency: true])
     pids = :ets.new(__MODULE__.Pids, [:private, :duplicate_bag, keypos: 2])
@@ -10,8 +13,13 @@ defmodule Firenest.ReplicatedState.Store do
 
   def list(%__MODULE__{values: values}, key) do
     local = {{{key, :_}, :"$1", :_}, [], [:"$1"]}
-    # remote = {{{key, :_}, :_, :"$1"}, [], [:"$1"]}
-    :ets.select(values, [local])
+    remote = {{{key, :_}, :"$1"}, [], [:"$1"]}
+    :ets.select(values, [local, remote])
+  end
+
+  def list_local(%__MODULE__{values: values}) do
+    ms = [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}]
+    :ets.select(values, ms)
   end
 
   def present?(%__MODULE__{values: values}, key, pid) do
@@ -74,6 +82,36 @@ defmodule Firenest.ReplicatedState.Store do
 
     :ets.insert(values, {ets_key, value, local_delta})
     state
+  end
+
+  def remote_delete(%__MODULE__{values: values} = state, {node, _}) when is_atom(node) do
+    remote_delete_values(values, node)
+    state
+  end
+
+  def remote_update(%__MODULE__{values: values} = state, {node, _}, data) when is_atom(node) do
+    remote_delete_values(values, node)
+    :ets.insert(values, data)
+    state
+  end
+
+  def remote_diff(%__MODULE__{values: values} = state, puts, updates, deletes, update_handler) do
+    delete_ms = for key <- deletes, do: {{key, :_}, [], true}
+    puts = Enum.reduce(updates, puts, &prepare_update(values, update_handler, &1))
+    :ets.insert(values, puts)
+    :ets.select_delete(values, delete_ms)
+    state
+  end
+
+  defp remote_delete_values(values, node) do
+    ms = [{{{:_, :"$1"}, :_}, [{:"=:=", {:node, :"$1"}, {:const, node}}], [true]}]
+    :ets.select_delete(values, ms)
+  end
+
+  defp prepare_update(values, {key, delta}, update_handler) do
+    value = :ets.lookup_element(values, key, 2)
+    new_value = update_handler.(delta, value)
+    {key, new_value}
   end
 
   if function_exported?(:ets, :whereis, 1) do

@@ -34,7 +34,7 @@ defmodule Firenest.ReplicatedState.Server do
        handler: handler,
        remote: remote,
        broadcast_timer: nil,
-       broadcast_timeout: broadcast_timeout,
+       broadcast_timeout: broadcast_timeout
      }}
   end
 
@@ -156,7 +156,7 @@ defmodule Firenest.ReplicatedState.Server do
   # def handle_info({:timeout, timer, :broadcast}, %{broadcast_timer: timer} = state) do
   #   %{pending_events: events, clock: clock} = state
   #   clock = clock + 1
-  #   SyncedServer.remote_broadcast({:events, clock, events})
+  #   SyncedServer.remote_broadcast({:broadcast, clock, events})
   #   {:noreply, %{state | clock: clock, pending_events: [], broadcast_timer: nil}}
   # end
 
@@ -193,64 +193,77 @@ defmodule Firenest.ReplicatedState.Server do
     end
   end
 
-  # @impl true
-  # def handle_remote({:catch_up_req, clock}, from, state) do
-  #   {mode, data} = catch_up_reply(state, clock)
-  #   SyncedServer.remote_send(from, {:catch_up, mode, data})
-  #   {:noreply, state}
-  # end
+  @impl true
+  def handle_remote({:catch_up_req, data}, from, state) do
+    %{remote: remote, store: store} = state
 
-  # def handle_remote({:catch_up, :state_transfer, {clock, transfer}}, from, state) do
-  #   state = handle_state_transfer(state, from, clock, transfer)
-  #   {:noreply, state}
-  # end
+    get_all_local = fn -> Store.list_local(store) end
+    reply = Remote.catch_up(remote, data, get_all_local)
+    SyncedServer.remote_send(from, {:catch_up_rep, reply})
+    {:noreply, state}
+  end
 
-  # def handle_remote({:events, remote_clock, events}, from, state) do
-  #   %{remote_clocks: remote_clocks} = state
-  #   local_clock = Map.fetch!(remote_clocks, from)
+  def handle_remote({:catch_up_rep, data}, from, state) do
+    %{remote: remote, store: store, handler: handler} = state
 
-  #   if remote_clock == local_clock + 1 do
-  #     remote_clocks = %{remote_clocks | from => remote_clock}
-  #     state = handle_events(state, from, events)
-  #     {:noreply, %{state | remote_clocks: remote_clocks}}
-  #   else
-  #     {:noreply, request_catch_up(state, from, local_clock)}
-  #   end
-  # end
+    case Remote.handle_catch_up(remote, from, data) do
+      {:insert, data, remote} ->
+        store = Store.remote_update(store, from, data)
+        {:noreply, %{state | remote: remote, store: store}}
 
-  # @impl true
-  # def handle_replica({:up, remote_clock}, remote_ref, state) do
-  #   %{remote_clocks: remote_clocks} = state
+      {:diff, puts, updates, deletes, remote} ->
+        update_handler = &Handler.handle_remote_delta(handler, &1, &2)
+        store = Store.remote_diff(store, puts, updates, deletes, update_handler)
+        {:noreply, %{state | remote: remote, store: store}}
 
-  #   case remote_clocks do
-  #     %{^remote_ref => old_clock} when remote_clock > old_clock ->
-  #       # Reconnection, try to catch up
-  #       {:noreply, request_catch_up(state, remote_ref, old_clock)}
+      {:ok, remote} ->
+        {:noreply, %{state | remote: remote}}
+    end
+  end
 
-  #     %{^remote_ref => old_clock} ->
-  #       # Reconnection, no remote state change, skip catch up
-  #       # Assert for sanity
-  #       true = old_clock == remote_clock
-  #       {:noreply, state}
+  def handle_remote({:broadcast, data}, from, state) do
+    %{remote: remote, store: store, hander: handler} = state
 
-  #     %{} when remote_clock == 0 ->
-  #       # New node, no state, don't catch up
-  #       state = %{state | remote_clocks: Map.put(remote_clocks, remote_ref, 0)}
-  #       {:noreply, state}
+    case Remote.handle_broadcast(remote, from, data) do
+      {:diff, puts, updates, deletes, remote} ->
+        update_handler = &Handler.handle_remote_delta(handler, &1, &2)
+        store = Store.remote_diff(store, puts, updates, deletes, update_handler)
+        {:noreply, %{state | remote: remote, store: store}}
 
-  #     %{} ->
-  #       # New node, catch up
-  #       state = %{state | remote_clocks: Map.put(remote_clocks, remote_ref, 0)}
-  #       {:noreply, request_catch_up(state, remote_ref, 0)}
-  #   end
-  # end
+      {:catch_up, data, remote} ->
+        SyncedServer.remote_send(from, {:catch_up_req, data})
+        {:noreply, %{state | remote: remote}}
 
-  # def handle_replica(:down, remote_ref, state) do
-  #   %{values: values, remote_clocks: remote_clocks} = state
-  #   delete_ms = [{{:_, remote_ref, :_}, [], [true]}]
-  #   :ets.select_delete(values, delete_ms)
-  #   {:noreply, %{state | remote_clocks: Map.delete(remote_clocks, remote_ref)}}
-  # end
+      {:ok, remote} ->
+        {:noreply, %{state | remote: remote}}
+    end
+  end
+
+  @impl true
+  def handle_replica(change, remote_ref, state) do
+    %{remote: remote, store: store} = state
+
+    case remote_replica(change, remote_ref, remote) do
+      {:ok, remote} ->
+        {:noreply, %{state | remote: remote}}
+
+      {:delete, remote} ->
+        store = Store.remote_delete(store, remote_ref)
+        {:noreply, %{state | remote: remote, store: store}}
+
+      {:catch_up, data, remote} ->
+        SyncedServer.remote_send(remote_ref, {:catch_up_req, data})
+        {:noreply, %{state | remote: remote}}
+    end
+  end
+
+  defp remote_replica({:up, clock}, ref, remote) do
+    Remote.up(remote, ref, clock)
+  end
+
+  defp remote_replica(:down, ref, remote) do
+    Remote.down(remote, ref)
+  end
 
   defp link(:partition), do: true
   defp link(pid), do: Process.link(pid)

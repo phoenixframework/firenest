@@ -44,4 +44,10 @@ defmodule Firenest.ReplicatedState.Handler do
     Enum.each(deletes, &mod.local_delete(&1, config))
     state
   end
+
+  def handle_remote_delta(%__MODULE__{} = state, delta, value) do
+    %{mod: mod, config: config} = state
+
+    mod.handle_remote_delta(delta, value, config)
+  end
 end

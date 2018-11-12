@@ -30,20 +30,28 @@ defmodule Firenest.ReplicatedState do
   @type local_delta() :: term()
   @type remote_delta() :: term()
   @type state() :: term()
-  @type config() :: term()
+  @type callback_config() :: term()
 
   @type extra_action :: :delete | {:update_after, update :: term(), time :: pos_integer()}
+
+  @type server_opt ::
+    {:remote_changes, :ignore | :observe_collapsed | :observe_full}
 
   @doc """
   Called when a partition starts up.
 
-  It returns an `initial_delta` that will be passed to `c:local_put/3`
-  callback on new entries and to `c:local_update/4` after remote
-  broadcast resets the local delta.
-  It also returns an immutable `config` value that will be passed to
-  all callbacks.
+  It returns:
+
+    * an `initial_delta` that will be passed to `c:local_put/3`
+      callback on new entries and to `c:local_update/4` after remote
+      broadcast resets the local delta.
+    * an immutable `callback_config` value that will be passed to all
+      callbacks.
+    * a list of server_opt` settings configuring the behaviour of the server
+
   """
-  @callback init(opts :: keyword()) :: {initial_delta :: local_delta(), config()}
+  @callback init(opts :: keyword()) ::
+              {initial_delta :: local_delta(), callback_config(), [server_opt]}
 
   @doc """
   Called whenever the `put/4` function is called to create a new state.
@@ -57,7 +65,7 @@ defmodule Firenest.ReplicatedState do
 
   This is a good place for broadcasting local state changes.
   """
-  @callback local_put(arg :: term(), local_delta(), config()) ::
+  @callback local_put(arg :: term(), local_delta(), callback_config()) ::
               {local_delta(), initial_state} | {local_delta(), initial_state, extra_action()}
             when initial_state: state()
 
@@ -80,7 +88,7 @@ defmodule Firenest.ReplicatedState do
   If the third element is `:delete`, the state will be immediately
   deleted and the `c:local_delete/2` callback triggered.
   """
-  @callback local_update(update :: term(), local_delta(), state(), config()) ::
+  @callback local_update(update :: term(), local_delta(), state(), callback_config()) ::
               {local_delta(), state()} | {local_delta(), state(), extra_action()}
 
   @doc """
@@ -91,7 +99,7 @@ defmodule Firenest.ReplicatedState do
 
   This is a good place for broadcasting local state changes.
   """
-  @callback local_delete(state(), config()) :: term()
+  @callback local_delete(state(), callback_config()) :: term()
 
   @doc """
   Called whenever the server is about to incrementally replicate local
@@ -104,7 +112,7 @@ defmodule Firenest.ReplicatedState do
 
   In case the callback is not provided it defaults to just returning local delta.
   """
-  @callback prepare_remote_delta(local_delta(), config()) :: remote_delta()
+  @callback prepare_remote_delta(local_delta(), callback_config()) :: remote_delta()
 
   @doc """
   Called whenever a remote delta is received from another node.
@@ -114,7 +122,7 @@ defmodule Firenest.ReplicatedState do
   exactly the same as the result of applying local updates to the
   state in the `c:local_update/3` callback.
   """
-  @callback handle_remote_delta(remote_delta(), state(), config()) :: state()
+  @callback handle_remote_delta(remote_delta(), state(), callback_config()) :: state()
 
   @doc """
   Called when remote changes are received by the local server.
@@ -132,7 +140,7 @@ defmodule Firenest.ReplicatedState do
       incremental changes to the remote state were communicated.
 
   This callback is optional and its behaviour depends on the value
-  of the `:remote_changes` option provided when the server is started.
+  of the `:remote_changes` option returned from the `c:init/2` callback.
 
     * `:ignore` - the callback is not invoked and the server skips
       all operations required for tracking the changes. This is the
@@ -155,7 +163,7 @@ defmodule Firenest.ReplicatedState do
 
   The return value is ignored.
   """
-  @callback observe_remote_changes(observed_remote_changes, config()) :: term()
+  @callback observe_remote_changes(observed_remote_changes, callback_config()) :: term()
             when observed_remote_changes: [{key(), [process_state_change]}],
                  process_state_change: {current_state :: state(), [change]},
                  change:
