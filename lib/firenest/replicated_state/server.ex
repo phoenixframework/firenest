@@ -33,7 +33,7 @@ defmodule Firenest.ReplicatedState.Server do
      %{
        store: store,
        handler: handler,
-       remote: remote,
+       remote: remote
      }}
   end
 
@@ -77,6 +77,7 @@ defmodule Firenest.ReplicatedState.Server do
 
           {:delete, value, delta, handler} ->
             remote = Remote.local_update(remote, key, pid, value, delta)
+
             case Store.local_delete(store, key, pid) do
               # The value returned from update is fresher
               {:ok, _value, store} ->
@@ -283,59 +284,4 @@ defmodule Firenest.ReplicatedState.Server do
       0 -> true
     end
   end
-
-  # defp schedule_broadcast_events(%{broadcast_timer: nil} = state, new_events) do
-  #   %{broadcast_timeout: timeout, pending_events: events} = state
-  #   timer = :erlang.start_timer(timeout, self(), :broadcast)
-  #   %{state | broadcast_timer: timer, pending_events: new_events ++ events}
-  # end
-
-  # defp schedule_broadcast_events(%{} = state, new_events) do
-  #   %{pending_events: events} = state
-  #   %{state | pending_events: new_events ++ events}
-  # end
-
-  # defp request_catch_up(state, remote_ref, clock) do
-  #   SyncedServer.remote_send(remote_ref, {:catch_up_req, clock})
-  #   state
-  # end
-
-  # defp handle_events(%{values: values} = state, from, events) do
-  #   {joins, leaves} =
-  #     Enum.reduce(events, {[], []}, fn
-  #       {:leave, key, pid}, {joins, leaves} ->
-  #         leave = {{{key, pid}, from, :_}, [], [true]}
-  #         {joins, [leave | leaves]}
-
-  #       {:replace, key, pid, value}, {joins, leaves} ->
-  #         join = {{key, pid}, from, value}
-  #         {[join | joins], leaves}
-
-  #       {:join, key, pid, value}, {joins, leaves} ->
-  #         join = {{key, pid}, from, value}
-  #         {[join | joins], leaves}
-  #     end)
-
-  #   :ets.insert(values, joins)
-  #   :ets.select_delete(values, leaves)
-  #   state
-  # end
-
-  # # TODO: detect leaves
-  # # Is there a better way than to clean up and re-insert?
-  # # This can be problematic for dirty reads!
-  # defp handle_state_transfer(%{values: values} = state, from, clock, transfer) do
-  #   %{remote_clocks: remote_clocks} = state
-  #   delete_ms = [{{:_, from, :_}, [], [true]}]
-  #   inserts = for {ets_key, value} <- transfer, do: {ets_key, from, value}
-  #   :ets.select_delete(values, delete_ms)
-  #   :ets.insert(values, inserts)
-  #   %{state | remote_clocks: %{remote_clocks | from => clock}}
-  # end
-
-  # # TODO: handle catch-up with events
-  # defp catch_up_reply(%{values: values}, clock) do
-  #   local_ms = [{{:"$1", :"$2"}, [], [{{:"$1", :"$2"}}]}]
-  #   {:state_transfer, {clock, :ets.select(values, local_ms)}}
-  # end
 end
