@@ -113,8 +113,8 @@ defmodule Firenest.ReplicatedState.Server do
         handler = Handler.local_delete(handler, [value])
         {:reply, :ok, %{state | store: store, handler: handler, remote: remote}}
 
-      {:error, store} ->
-        {:reply, {:error, :not_present}, %{state | store: store}}
+      :error ->
+        {:reply, {:error, :not_present}, state}
     end
   end
 
@@ -128,8 +128,8 @@ defmodule Firenest.ReplicatedState.Server do
         # TODO: how do we handle remote in here?
         {:reply, :ok, %{state | store: store, handler: handler}}
 
-      {:error, store} ->
-        {:reply, {:error, :not_member}, %{state | store: store}}
+      :error ->
+        {:reply, {:error, :not_member}, state}
     end
   end
 
@@ -151,8 +151,8 @@ defmodule Firenest.ReplicatedState.Server do
         # TODO: how do we handle remote in here?
         {:noreply, %{state | store: store, handler: handler}}
 
-      {:error, store} ->
-        {:stop, reason, %{state | store: store}}
+      :error ->
+        {:stop, reason, state}
     end
   end
 

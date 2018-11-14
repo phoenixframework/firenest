@@ -50,7 +50,7 @@ defmodule Firenest.ReplicatedState.Store do
 
     case :ets.select_delete(pids, ms) do
       0 ->
-        {:error, state}
+        :error
 
       1 ->
         [{_, value, _}] = :ets.take(values, ets_key)
@@ -66,7 +66,7 @@ defmodule Firenest.ReplicatedState.Store do
   def local_delete(%__MODULE__{values: values, pids: pids} = state, pid) do
     case :ets.take(pids, pid) do
       [] ->
-        {:error, state}
+        :error
 
       list ->
         delete_ms = for ets_key <- list, do: {{ets_key, :_, :_}, [], [true]}
@@ -96,8 +96,8 @@ defmodule Firenest.ReplicatedState.Store do
   end
 
   def remote_diff(%__MODULE__{values: values} = state, puts, updates, deletes, update_handler) do
-    delete_ms = for key <- deletes, do: {{key, :_}, [], true}
-    puts = Enum.reduce(updates, puts, &prepare_update(values, update_handler, &1))
+    delete_ms = for key <- deletes, do: {{key, :_}, [], [true]}
+    puts = Enum.reduce(updates, puts, &[prepare_update(values, &1, update_handler) | &2])
     :ets.insert(values, puts)
     :ets.select_delete(values, delete_ms)
     state
