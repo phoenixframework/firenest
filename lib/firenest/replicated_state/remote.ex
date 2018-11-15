@@ -1,11 +1,17 @@
 defmodule Firenest.ReplicatedState.Remote do
-  defstruct pending: %{}, clocks: %{}, clock: 0, tag: nil, deltas: %{}, broadcast: nil
+  @moduledoc false
+
+  defstruct pending: %{}, clocks: %{}, clock: 0, tag: nil, deltas: nil, broadcast: nil
 
   # TODO: some protocol for requesting more of a state, even from other nodes
   # on first up, so we don't need to go to each node separately.
 
-  def new(:ignore, broadcast) do
-    %__MODULE__{tag: :ignore, broadcast: broadcast}
+  import Record
+  defrecord :deltas, max: nil, lowest: 0, store: %{}
+
+  def new(:ignore, broadcast, max_deltas)
+      when is_function(broadcast, 0) and is_integer(max_deltas) do
+    %__MODULE__{tag: :ignore, broadcast: broadcast, deltas: deltas(max: max_deltas)}
   end
 
   def clock(%__MODULE__{clock: clock}), do: clock
@@ -15,7 +21,7 @@ defmodule Firenest.ReplicatedState.Remote do
     case clocks do
       # Reconnection, try to catch up
       %{^ref => old_clock} when clock > old_clock ->
-        {:catch_up, {clock, old_clock}, state}
+        {:catch_up, old_clock, state}
 
       # Reconnection, no remote changes
       %{^ref => old_clock} ->
@@ -29,7 +35,7 @@ defmodule Firenest.ReplicatedState.Remote do
 
       # New node, catch up
       %{} ->
-        {:catch_up, {clock, 0}, state}
+        {:catch_up, 0, state}
     end
   end
 
@@ -44,8 +50,8 @@ defmodule Firenest.ReplicatedState.Remote do
     {:delete, ref, %{state | clocks: clocks}}
   end
 
-  def catch_up(%__MODULE__{clock: current} = state, {clock, old_clock}, state_getter)
-      when old_clock < clock and clock <= current do
+  def catch_up(%__MODULE__{clock: current} = state, old_clock, state_getter)
+      when old_clock < current do
     %{deltas: deltas, tag: tag} = state
 
     if Map.has_key?(deltas, old_clock) do
@@ -56,10 +62,16 @@ defmodule Firenest.ReplicatedState.Remote do
   end
 
   def broadcast(%__MODULE__{} = state, prepare_delta) do
-    %{pending: pending, clock: clock, tag: tag, broadcast: {:scheduled, broadcast}} = state
-    deltas = prepare_deltas(tag, pending, prepare_delta)
-    new_state = %{state | pending: %{}, clock: clock + 1, broadcast: broadcast}
-    {{tag, clock, deltas}, new_state}
+    %{pending: pending, clock: clock, tag: tag, broadcast: broadcast, deltas: deltas} = state
+    {:scheduled, broadcast} = broadcast
+
+    new_deltas = prepare_deltas(tag, pending, prepare_delta)
+
+    new_clock = clock + 1
+    deltas = store_deltas(deltas, new_clock, new_deltas)
+    new_state = %{state | pending: %{}, clock: new_clock, broadcast: broadcast, deltas: deltas}
+
+    {{tag, clock, new_deltas}, new_state}
   end
 
   def handle_catch_up(%__MODULE__{tag: tag} = state, ref, {:deltas, tag, clock, deltas}) do
@@ -89,7 +101,7 @@ defmodule Firenest.ReplicatedState.Remote do
 
       # We missed some broadcast, catch up with the node
       %{^ref => old_clock} when clock > old_clock ->
-        {:catch_up, {clock, old_clock}, state}
+        {:catch_up, old_clock, state}
 
       # We were caught up with a newer clock than the current, ignore
       # TODO: is that even possible?
@@ -173,12 +185,12 @@ defmodule Firenest.ReplicatedState.Remote do
     prepare_ignore_deltas(rest, [{key, value} | puts], updates, deletes, prepare)
   end
 
-  defp prepare_ignore_deltas([{key, {:update, delta}} | rest], puts, deletes, updates, prepare) do
+  defp prepare_ignore_deltas([{key, {:update, delta}} | rest], puts, updates, deletes, prepare) do
     delta = prepare.(delta)
     prepare_ignore_deltas(rest, puts, [{key, delta} | updates], deletes, prepare)
   end
 
-  defp prepare_ignore_deltas([{key, :delete} | rest], puts, deletes, updates, prepare) do
+  defp prepare_ignore_deltas([{key, :delete} | rest], puts, updates, deletes, prepare) do
     prepare_ignore_deltas(rest, puts, updates, [key | deletes], prepare)
   end
 
@@ -193,5 +205,15 @@ defmodule Firenest.ReplicatedState.Remote do
   defp broadcast(fun) do
     fun.()
     {:scheduled, fun}
+  end
+
+  defp store_deltas(deltas(max: max, lowest: lowest, store: store), clock, new_delta) do
+    store = Map.put(store, clock, new_delta)
+
+    if map_size(store) > max do
+      deltas(max: max, lowest: lowest + 1, store: Map.delete(store, lowest))
+    else
+      deltas(max: max, lowest: lowest, store: store)
+    end
   end
 end
