@@ -20,14 +20,15 @@ defmodule Firenest.ReplicatedState.Server do
 
     store = Store.new(name)
 
-    remote_changes = Keyword.get(opts, :remote_changes, :ignore)
+    delayed_fun = &Process.send_after(self(), {:update, &1, &2, &3}, &4)
+    {handler, server_opts} = Handler.new(handler, opts, delayed_fun)
+
     broadcast_timeout = Keyword.get(opts, :broadcast_timeout, 50)
     broadcast_fun = fn -> Process.send_after(self(), :broadcast_timeout, broadcast_timeout) end
-    remote = Remote.new(remote_changes, broadcast_fun)
 
-    delayed_fun = &Process.send_after(self(), {:update, &1, &2, &3}, &4)
-    # The `mode` should be read from init instead of options
-    handler = Handler.new(handler, opts, delayed_fun)
+    remote_changes = Keyword.get(server_opts, :remote_changes, :ignore)
+    max_deltas = Keyword.get(opts, :max_remote_deltas, 5)
+    remote = Remote.new(remote_changes, broadcast_fun, max_deltas)
 
     {:ok,
      %{

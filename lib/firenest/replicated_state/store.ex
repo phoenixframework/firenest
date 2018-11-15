@@ -1,4 +1,6 @@
 defmodule Firenest.ReplicatedState.Store do
+  @moduledoc false
+
   defstruct [:values, :pids]
 
   # Common data exchange format:

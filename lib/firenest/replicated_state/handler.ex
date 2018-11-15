@@ -1,9 +1,12 @@
 defmodule Firenest.ReplicatedState.Handler do
+  @moduledoc false
+
   defstruct mod: nil, init_delta: nil, config: nil, delayed_fun: nil
 
   def new(mod, mod_opts, delayed_fun) do
-    {init_delta, config} = mod.init(mod_opts)
-    %__MODULE__{mod: mod, init_delta: init_delta, config: config, delayed_fun: delayed_fun}
+    {delta, config, opts} = mod.init(mod_opts)
+    state = %__MODULE__{mod: mod, init_delta: delta, config: config, delayed_fun: delayed_fun}
+    {state, opts}
   end
 
   def local_put(%__MODULE__{} = state, arg, key, pid) do
@@ -57,7 +60,7 @@ defmodule Firenest.ReplicatedState.Handler do
     if function_exported?(mod, :prepare_remote_delta, 2) do
       &mod.prepare_remote_delta(&1, config)
     else
-      &(&1)
+      & &1
     end
   end
 end

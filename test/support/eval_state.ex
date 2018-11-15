@@ -3,7 +3,7 @@ defmodule Firenest.Test.EvalState do
 
   @impl true
   def init(opts) do
-    {0, opts}
+    {0, opts, opts}
   end
 
   @impl true
