@@ -30,6 +30,13 @@ defmodule Firenest.Topology do
   @typedoc "A unique identidier for a node in the topology."
   @type node_ref() :: {name :: node(), id :: term()}
 
+  @typedoc """
+  The plane (such as connection) to broadcast/send messages on.
+
+  Currently `plane` is always `:default`.
+  """
+  @type plane() :: atom()
+
   @doc """
   Returns the child specification for a topology.
 
@@ -51,13 +58,19 @@ defmodule Firenest.Topology do
 
   @doc """
   Broadcasts `message` to all processes named `name` on all other nodes in `topology`.
+
+  The plane allows developers to configure different planes (such as connections)
+  to broadcast the message. Currently `plane` is always `:default`.
   """
-  @callback broadcast(t(), name(), message :: term()) :: :ok | {:error, term()}
+  @callback broadcast(t(), name(), plane(), message :: term()) :: :ok | {:error, term()}
 
   @doc """
   Sends a `message` to the process named `name` in `node` running on the `topology`.
+
+  The plane allows developers to configure different planes (such as connections)
+  to broadcast the message. Currently `plane` is always `:default`.
   """
-  @callback send(t(), node_ref(), name(), message :: term()) :: :ok | {:error, term()}
+  @callback send(t(), node_ref(), name(), plane(), message :: term()) :: :ok | {:error, term()}
 
   @doc """
   Asks the topology to connect to the given node.
@@ -134,7 +147,7 @@ defmodule Firenest.Topology do
   """
   @spec broadcast(t(), name(), message :: term()) :: :ok | {:error, term()}
   def broadcast(topology, name, message) when is_atom(topology) and is_atom(name) do
-    adapter!(topology).broadcast(topology, name, message)
+    adapter!(topology).broadcast(topology, name, :default, message)
   end
 
   @doc """
@@ -152,7 +165,7 @@ defmodule Firenest.Topology do
   @spec send(t(), node_ref(), name(), message :: term()) :: :ok | {:error, term()}
   def send(topology, {node, _} = node_ref, name, message)
       when is_atom(topology) and is_atom(node) and is_atom(name) do
-    adapter!(topology).send(topology, node_ref, name, message)
+    adapter!(topology).send(topology, node_ref, name, :default, message)
   end
 
   @doc """

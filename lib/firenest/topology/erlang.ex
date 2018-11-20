@@ -68,11 +68,11 @@ defmodule Firenest.Topology.Erlang do
     end
   end
 
-  def broadcast(topology, name, message) do
+  def broadcast(topology, name, :default, message) do
     topology |> node_names() |> Enum.each(&Process.send({name, &1}, message, [:noconnect]))
   end
 
-  def send(topology, {node, _} = node_ref, name, message) do
+  def send(topology, {node, _} = node_ref, name, :default, message) do
     if node == Kernel.node() or node_ref_connected?(topology, node_ref) do
       Process.send({name, node}, message, [:noconnect])
     else
