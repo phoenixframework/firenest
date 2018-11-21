@@ -10,7 +10,7 @@ defmodule Firenest.TopologyTest do
   import Firenest.TestHelpers
 
   setup_all do
-    wait_until(fn -> Process.whereis(:firenest_topology_setup) == nil end)
+    wait_until(fn -> Process.whereis(:firenest_topology_setup) == nil end, 5000)
     topology = Firenest.Test
 
     {:ok,

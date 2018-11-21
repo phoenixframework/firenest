@@ -49,6 +49,10 @@ defmodule Firenest.ReplicatedState do
       callbacks.
     * a list of server_opt` settings configuring the behaviour of the server
 
+        * `:remote_changes` - specifies behaviour of the `c:observe_remote_changes/2`
+          callback and can be `:observe_full | :observe_collapsed | :ignore`,
+          defaults to `:ignore`;
+
   """
   @callback init(opts :: keyword()) ::
               {initial_delta :: local_delta(), callback_config(), [server_opt]}
@@ -182,11 +186,10 @@ defmodule Firenest.ReplicatedState do
     * `:name` - name for the process, required;
     * `:topology` - name of the supporting topology, required;
     * `:partitions` - number of partitions, defaults to 1;
-    * `:broadcast_timeout` - delay of broadcasting local events to other nodes,
-      defaults to 50 ms;
-    * `:remote_changes` - specifies behaviour of the `c:observe_remote_changes/2`
-      callback and can be `:observe_full | :observe_collapsed | :ignore`,
-      defaults to `:ignore`;
+    * `:broadcast_timeout` - delay (in milliseconds) of broadcasting local
+      events to other nodes, defaults to 50 ms;
+    * `:max_remote_deltas` - the number of last broadcast deltas to keep for
+      catching up nodes that fell behind, defaults to 5.
 
   """
   defdelegate child_spec(opts), to: Firenest.ReplicatedState.Supervisor
