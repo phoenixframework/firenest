@@ -45,7 +45,7 @@ defmodule Firenest.ReplicatedState.Remote do
   end
 
   def permdown(%__MODULE__{clocks: clocks} = state, ref) do
-    true = Map.has_key?(clocks, ref)
+    %{^ref => _} = clocks
     clocks = Map.delete(clocks, ref)
     {:delete, ref, %{state | clocks: clocks}}
   end

@@ -7,7 +7,7 @@ defmodule Firenest.PubSubTest do
   import Firenest.TestHelpers
 
   setup_all do
-    wait_until(fn -> Process.whereis(:firenest_topology_setup) == nil end, 500)
+    wait_until(fn -> Process.whereis(:firenest_topology_setup) == nil end, 5000)
     nodes = [:"first@127.0.0.1", :"second@127.0.0.1"]
     pubsub = Firenest.Test.PubSub
     topology = Firenest.Test

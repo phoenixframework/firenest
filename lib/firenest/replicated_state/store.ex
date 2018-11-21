@@ -3,8 +3,25 @@ defmodule Firenest.ReplicatedState.Store do
 
   defstruct [:values, :pids]
 
-  # Common data exchange format:
-  # {{key, pid}, value}
+  # Local data is stored in the values table in the following format:
+  #
+  #     {{key, pid}, value, delta}
+  #
+  # Remote data is stored as:
+  #
+  #     {{key, pid}, value}
+  #
+  # To recognise the node that remote data is coming from we can use
+  # the `node/1` function in the match spec. This saves on space of
+  # explicitly storing node and whole-node operations should be rare
+  # in practice. We can ignore the version part of node_ref, since
+  # we're guaranteed to get a nodedown from the old version of the node
+  # before it comes back up with a new version - we can ignore the
+  # version when storing the data.
+  #
+  # The pids table stores data as {key, pid} with key position of 2.
+  # This allows having the same data format in both tables and save
+  # on some data shuffling.
 
   def new(name) do
     values = :ets.new(name, [:named_table, :protected, :ordered_set, read_concurrency: true])

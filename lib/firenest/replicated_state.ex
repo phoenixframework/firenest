@@ -111,7 +111,7 @@ defmodule Firenest.ReplicatedState do
   It takes in the local delta value constructed in the `c:local_update/4`
   calls and returns a remote delta value that will be replicated to other
   servers. The value of the local delta is reset to the initial delta value
-  returned from the `c:local_join/2` callback.
+  returned from the `c:init/1` callback.
 
   In case the callback is not provided it defaults to just returning local delta.
   """
@@ -191,6 +191,8 @@ defmodule Firenest.ReplicatedState do
       catching up nodes that fell behind, defaults to 5.
 
   """
+  defdelegate start_link(opts), to: Firenest.ReplicatedState.Supervisor
+
   defdelegate child_spec(opts), to: Firenest.ReplicatedState.Supervisor
 
   @doc """
@@ -304,6 +306,7 @@ defmodule Firenest.ReplicatedState do
 
   defp cancel_flush_timer(timer_ref) do
     :erlang.cancel_timer(timer_ref)
+
     receive do
       {:timeout, ^timer_ref, _} -> :ok
     after
@@ -334,29 +337,26 @@ defmodule Firenest.ReplicatedState.Supervisor do
   @moduledoc false
   use Supervisor
 
-  def child_spec(opts) do
-    partitions = Keyword.get(opts, :partitions, 1)
+  def start_link(opts) do
     name = Keyword.fetch!(opts, :name)
-    topology = Keyword.fetch!(opts, :topology)
-    handler = Keyword.fetch!(opts, :handler)
     supervisor = Module.concat(name, "Supervisor")
-    arg = {partitions, name, topology, handler, opts}
-
-    %{
-      id: __MODULE__,
-      start: {Supervisor, :start_link, [__MODULE__, arg, [name: supervisor]]},
-      type: :supervisor
-    }
+    Supervisor.start_link(__MODULE__, {name, opts}, name: supervisor)
   end
 
-  def init({partitions, name, topology, handler, opts}) do
+  def init({name, opts}) do
+    partitions = Keyword.get(opts, :partitions, 1)
+    topology = Keyword.fetch!(opts, :topology)
+    handler = Keyword.fetch!(opts, :handler)
+
     names =
       for partition <- 0..(partitions - 1),
           do: Module.concat(name, "Partition" <> Integer.to_string(partition))
 
     children =
-      for name <- names,
-          do: {Firenest.ReplicatedState.Server, {name, topology, handler, opts}}
+      for name <- names do
+        spec = {Firenest.ReplicatedState.Server, {name, topology, handler, opts}}
+        Supervisor.child_spec(spec, id: name)
+      end
 
     :ets.new(name, [:named_table, :set, read_concurrency: true])
     :ets.insert(name, {:partitions, partitions, List.to_tuple(names)})

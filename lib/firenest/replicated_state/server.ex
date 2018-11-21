@@ -5,13 +5,10 @@ defmodule Firenest.ReplicatedState.Server do
   alias Firenest.SyncedServer
   alias Firenest.ReplicatedState.{Store, Remote, Handler}
 
-  def child_spec({name, topology, handler, opts}) do
+  def start_link({name, topology, handler, opts}) do
     server_opts = [name: name, topology: topology]
 
-    %{
-      id: name,
-      start: {SyncedServer, :start_link, [__MODULE__, {name, handler, opts}, server_opts]}
-    }
+    SyncedServer.start_link(__MODULE__, {name, handler, opts}, server_opts)
   end
 
   @impl true
@@ -46,8 +43,11 @@ defmodule Firenest.ReplicatedState.Server do
     %{store: store, handler: handler, remote: remote} = state
 
     link(pid)
+    pid = resolve_pid(pid)
 
-    unless Store.present?(store, key, pid) do
+    if Store.present?(store, key, pid) do
+      {:reply, {:error, :already_present}, state}
+    else
       case Handler.local_put(handler, arg, key, pid) do
         {:put, value, delta, handler} ->
           remote = Remote.local_put(remote, key, pid, value)
@@ -60,13 +60,12 @@ defmodule Firenest.ReplicatedState.Server do
           handler = Handler.local_delete(handler, [value])
           {:reply, :ok, %{state | handler: handler, remote: remote}}
       end
-    else
-      {:reply, {:error, :already_present}, state}
     end
   end
 
   def handle_call({:update, key, pid, arg}, _from, state) do
     %{store: store, handler: handler, remote: remote} = state
+    pid = resolve_pid(pid)
 
     case Store.fetch(store, key, pid) do
       {:ok, value, delta} ->
@@ -101,6 +100,7 @@ defmodule Firenest.ReplicatedState.Server do
 
   def handle_call({:delete, key, pid}, _from, state) do
     %{store: store, handler: handler, remote: remote} = state
+    pid = resolve_pid(pid)
 
     case Store.local_delete(store, key, pid) do
       {:ok, value, store} ->
@@ -121,6 +121,7 @@ defmodule Firenest.ReplicatedState.Server do
 
   def handle_call({:delete, pid}, _from, state) do
     %{store: store, handler: handler} = state
+    pid = resolve_pid(pid)
 
     case Store.local_delete(store, pid) do
       {:ok, deletes, store} ->
@@ -273,6 +274,9 @@ defmodule Firenest.ReplicatedState.Server do
 
   defp link(:partition), do: true
   defp link(pid), do: Process.link(pid)
+
+  defp resolve_pid(:partition), do: self()
+  defp resolve_pid(pid), do: pid
 
   defp unlink_flush(:partition), do: true
 
