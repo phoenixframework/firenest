@@ -34,8 +34,7 @@ defmodule Firenest.ReplicatedState do
 
   @type extra_action :: :delete | {:update_after, update :: term(), time :: pos_integer()}
 
-  @type server_opt ::
-    {:remote_changes, :ignore | :observe_collapsed | :observe_full}
+  @type server_opt :: {:remote_changes, :ignore | :observe_collapsed | :observe_full}
 
   @doc """
   Called when a partition starts up.
@@ -268,27 +267,48 @@ defmodule Firenest.ReplicatedState do
   # def dirty_list(server, group)
 
   defp multicall(servers, request, timeout) do
-    servers
-    |> Enum.map(fn server ->
-      pid = Process.whereis(server)
-      ref = Process.monitor(pid)
-      send(pid, {:"$gen_call", {self(), ref}, request})
-      ref
-    end)
-    |> Enum.map(fn ref ->
-      receive do
-        {^ref, reply} ->
-          Process.demonitor(ref, [:flush])
-          reply
+    timer_ref = :erlang.start_timer(timeout, self(), :timeout)
 
-        {:DOWN, ^ref, _, _, reason} ->
-          exit(reason)
-      after
-        timeout ->
-          Process.demonitor(ref, [:flush])
-          exit(:timeout)
-      end
-    end)
+    request_refs =
+      Enum.map(servers, fn server ->
+        pid = Process.whereis(server)
+        ref = Process.monitor(pid)
+        send(pid, {:"$gen_call", {self(), ref}, request})
+        ref
+      end)
+
+    collect_replies(request_refs, timer_ref)
+  end
+
+  defp collect_replies([], timer_ref) do
+    cancel_flush_timer(timer_ref)
+    []
+  end
+
+  defp collect_replies([ref | request_refs], timer_ref) do
+    receive do
+      {^ref, reply} ->
+        Process.demonitor(ref, [:flush])
+        [reply | collect_replies(request_refs, timer_ref)]
+
+      {:DOWN, ^ref, _, _, reason} ->
+        cancel_flush_timer(timer_ref)
+        Enum.each(request_refs, &Process.demonitor(&1, [:flush]))
+        exit(reason)
+
+      {:timeout, ^timer_ref, _} ->
+        Enum.each([ref | request_refs], &Process.demonitor(&1, [:flush]))
+        exit(:timeout)
+    end
+  end
+
+  defp cancel_flush_timer(timer_ref) do
+    :erlang.cancel_timer(timer_ref)
+    receive do
+      {:timeout, ^timer_ref, _} -> :ok
+    after
+      0 -> :ok
+    end
   end
 
   defp partition_info!(server, key) do
