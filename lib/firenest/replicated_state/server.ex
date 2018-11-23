@@ -140,9 +140,7 @@ defmodule Firenest.ReplicatedState.Server do
   def handle_call({:list, key}, _from, state) do
     %__MODULE__{store: store} = state
 
-    read = fn -> Store.list(store, key) end
-
-    {:reply, read, state}
+    {:reply, {Store, :list, [store, key]}, state}
   end
 
   @impl true

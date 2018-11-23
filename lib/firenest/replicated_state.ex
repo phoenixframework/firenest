@@ -262,7 +262,8 @@ defmodule Firenest.ReplicatedState do
   @spec list(server(), key()) :: [state()]
   def list(server, key) do
     partition = partition_info!(server, key)
-    SyncedServer.call(partition, {:list, key}).()
+    {m, f, args} = SyncedServer.call(partition, {:list, key})
+    apply(m, f, args)
   end
 
   # TODO
