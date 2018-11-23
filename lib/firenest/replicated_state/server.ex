@@ -214,7 +214,7 @@ defmodule Firenest.ReplicatedState.Server do
     %{remote: remote, store: store, handler: handler} = state
 
     case Remote.handle_catch_up(remote, from, data) do
-      {:insert, data, remote} ->
+      {:replace, data, remote} ->
         store = Store.remote_update(store, from, data)
         {:noreply, %{state | remote: remote, store: store}}
 

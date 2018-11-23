@@ -4,7 +4,7 @@ defmodule Firenest.ReplicatedState.StoreTest do
   alias Firenest.ReplicatedState.Store
 
   setup %{test: test} do
-    store = Store.new(test)
+    %Store{} = store = Store.new(test)
     other = spawn_link(fn -> Process.sleep(:infinity) end)
     [store: store, other: other]
   end

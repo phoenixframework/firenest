@@ -320,16 +320,10 @@ defmodule Firenest.ReplicatedState do
     ms = [{{:partitions, :"$1", :"$2"}, [], [extract]}]
     [info] = :ets.select(server, ms)
     info
-  catch
-    :error, :badarg ->
-      raise ArgumentError, "unknown key: #{inspect(server)}"
   end
 
   defp partition_infos!(server) do
     Tuple.to_list(:ets.lookup_element(server, :partitions, 3))
-  catch
-    :error, :badarg ->
-      raise ArgumentError, "unknown group: #{inspect(server)}"
   end
 end
 

@@ -16,6 +16,8 @@ defmodule Firenest.ReplicatedState.Remote do
 
   def clock(%__MODULE__{clock: clock}), do: clock
 
+  def clock_for(%__MODULE__{clocks: clocks}, ref), do: Map.fetch!(clocks, ref)
+
   # Reconnections are dead until we have permdown
   def up(%__MODULE__{clocks: clocks} = state, ref, clock) do
     case clocks do
@@ -52,10 +54,10 @@ defmodule Firenest.ReplicatedState.Remote do
 
   def catch_up(%__MODULE__{clock: current} = state, old_clock, state_getter)
       when old_clock < current do
-    %{deltas: deltas, tag: tag} = state
+    %{deltas: deltas(store: deltas, lowest: lowest), tag: tag} = state
 
-    if Map.has_key?(deltas, old_clock) do
-      {:deltas, tag, current, Enum.flat_map(old_clock..current, &Map.fetch!(deltas, &1))}
+    if old_clock >= lowest do
+      {:deltas, tag, current, Enum.map((old_clock + 1)..current, &Map.fetch!(deltas, &1))}
     else
       {:state_transfer, tag, current, state_getter.()}
     end
@@ -71,22 +73,22 @@ defmodule Firenest.ReplicatedState.Remote do
     deltas = store_deltas(deltas, new_clock, new_deltas)
     new_state = %{state | pending: %{}, clock: new_clock, broadcast: broadcast, deltas: deltas}
 
-    {{tag, clock, new_deltas}, new_state}
+    {{tag, new_clock, new_deltas}, new_state}
   end
 
   def handle_catch_up(%__MODULE__{tag: tag} = state, ref, {:deltas, tag, clock, deltas}) do
     %{clocks: clocks} = state
 
-    state = %{state | clocks: %{clocks | ref => clock}}
+    state = %{state | clocks: Map.put(clocks, ref, clock)}
     {puts, updates, deletes} = handle_deltas(tag, deltas)
     {:diff, puts, updates, deletes, state}
   end
 
-  def handle_catch_up(%__MODULE__{tag: tag} = state, from, {:state_transfer, tag, clock, data}) do
+  def handle_catch_up(%__MODULE__{tag: tag} = state, ref, {:state_transfer, tag, clock, data}) do
     %{clocks: clocks} = state
 
     case tag do
-      :ignore -> {:insert, data, %{state | clocks: %{clocks | from => clock}}}
+      :ignore -> {:replace, data, %{state | clocks: Map.put(clocks, ref, clock)}}
     end
   end
 
