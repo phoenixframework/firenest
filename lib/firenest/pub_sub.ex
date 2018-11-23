@@ -41,7 +41,7 @@ defmodule Firenest.PubSub do
   end
 
   @doc """
-  Returns a child specifiction for pubsub with the given `options`.
+  Returns a child specification for pubsub with the given `options`.
 
   The `:name` and `:topology` keys are required as part of `options`.
   `:name` refers to the name of the pubsub to be started and `:topology`
@@ -119,7 +119,7 @@ defmodule Firenest.PubSub do
   Broadcasts the given `message` on `topic` in `pubsub`.
 
   Returns `:ok` or `{:error, reason}` in case of failures in
-  the distributed brodcast.
+  the distributed broadcast.
   """
   @spec broadcast(t, topic | [topic], term) :: :ok | {:error, term}
   def broadcast(pubsub, topic, message) when is_atom(pubsub) do
@@ -135,7 +135,7 @@ defmodule Firenest.PubSub do
   Broadcasts the given `message` on `topic` in `pubsub`.
 
   Returns `:ok` or raises `Firenest.PubSub.BroadcastError` in case of
-  failures in the distributed brodcast.
+  failures in the distributed broadcast.
   """
   @spec broadcast!(t, topic | [topic], term) :: :ok | no_return
   def broadcast!(pubsub, topic, message) do
@@ -153,7 +153,7 @@ defmodule Firenest.PubSub do
   are not delivered to the broadcasting process.
 
   Returns `:ok` or `{:error, reason}` in case of failures in
-  the distributed brodcast.
+  the distributed broadcast.
   """
   @spec broadcast_from(t, pid, topic | [topic], term) :: :ok | {:error, term()}
   def broadcast_from(pubsub, pid, topic, message) when is_atom(pubsub) and is_pid(pid) do
@@ -173,7 +173,7 @@ defmodule Firenest.PubSub do
   are not delivered to the broadcasting process.
 
   Returns `:ok` or raises `Firenest.PubSub.BroadcastError` in case of
-  failures in the distributed brodcast.
+  failures in the distributed broadcast.
   """
   @spec broadcast_from!(t, pid, topic | [topic], term) :: :ok | no_return
   def broadcast_from!(pubsub, pid, topic, message) do
