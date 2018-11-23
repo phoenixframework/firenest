@@ -11,6 +11,8 @@ defmodule Firenest.ReplicatedState.Server do
     SyncedServer.start_link(__MODULE__, {name, handler, opts}, server_opts)
   end
 
+  defstruct [:store, :handler, :remote]
+
   @impl true
   def init({name, handler, opts}) do
     Process.flag(:trap_exit, true)
@@ -28,7 +30,7 @@ defmodule Firenest.ReplicatedState.Server do
     remote = Remote.new(remote_changes, broadcast_fun, max_deltas)
 
     {:ok,
-     %{
+     %__MODULE__{
        store: store,
        handler: handler,
        remote: remote
@@ -40,7 +42,7 @@ defmodule Firenest.ReplicatedState.Server do
 
   @impl true
   def handle_call({:put, key, pid, arg}, _from, state) do
-    %{store: store, handler: handler, remote: remote} = state
+    %__MODULE__{store: store, handler: handler, remote: remote} = state
 
     link(pid)
     pid = resolve_pid(pid)
@@ -64,7 +66,7 @@ defmodule Firenest.ReplicatedState.Server do
   end
 
   def handle_call({:update, key, pid, arg}, _from, state) do
-    %{store: store, handler: handler, remote: remote} = state
+    %__MODULE__{store: store, handler: handler, remote: remote} = state
     pid = resolve_pid(pid)
 
     case Store.fetch(store, key, pid) do
@@ -99,7 +101,7 @@ defmodule Firenest.ReplicatedState.Server do
   end
 
   def handle_call({:delete, key, pid}, _from, state) do
-    %{store: store, handler: handler, remote: remote} = state
+    %__MODULE__{store: store, handler: handler, remote: remote} = state
     pid = resolve_pid(pid)
 
     case Store.local_delete(store, key, pid) do
@@ -120,7 +122,7 @@ defmodule Firenest.ReplicatedState.Server do
   end
 
   def handle_call({:delete, pid}, _from, state) do
-    %{store: store, handler: handler} = state
+    %__MODULE__{store: store, handler: handler} = state
     pid = resolve_pid(pid)
 
     case Store.local_delete(store, pid) do
@@ -136,7 +138,7 @@ defmodule Firenest.ReplicatedState.Server do
   end
 
   def handle_call({:list, key}, _from, state) do
-    %{store: store} = state
+    %__MODULE__{store: store} = state
 
     read = fn -> Store.list(store, key) end
 
@@ -145,7 +147,7 @@ defmodule Firenest.ReplicatedState.Server do
 
   @impl true
   def handle_info({:EXIT, pid, reason}, state) do
-    %{store: store, handler: handler} = state
+    %__MODULE__{store: store, handler: handler} = state
 
     case Store.local_delete(store, pid) do
       {:ok, leaves, store} ->
@@ -159,7 +161,7 @@ defmodule Firenest.ReplicatedState.Server do
   end
 
   def handle_info(:broadcast_timeout, state) do
-    %{remote: remote, handler: handler} = state
+    %__MODULE__{remote: remote, handler: handler} = state
 
     prepare_delta = Handler.prepare_remote_delta_fun(handler)
     {data, remote} = Remote.broadcast(remote, prepare_delta)
@@ -168,7 +170,7 @@ defmodule Firenest.ReplicatedState.Server do
   end
 
   def handle_info({:update, key, pid, arg}, state) do
-    %{store: store, handler: handler} = state
+    %__MODULE__{store: store, handler: handler} = state
 
     case Store.fetch(store, key, pid) do
       {:ok, value, delta} ->
@@ -202,7 +204,7 @@ defmodule Firenest.ReplicatedState.Server do
 
   @impl true
   def handle_remote({:catch_up_req, data}, from, state) do
-    %{remote: remote, store: store} = state
+    %__MODULE__{remote: remote, store: store} = state
 
     get_all_local = fn -> Store.list_local(store) end
     reply = Remote.catch_up(remote, data, get_all_local)
@@ -211,7 +213,7 @@ defmodule Firenest.ReplicatedState.Server do
   end
 
   def handle_remote({:catch_up_rep, data}, from, state) do
-    %{remote: remote, store: store, handler: handler} = state
+    %__MODULE__{remote: remote, store: store, handler: handler} = state
 
     case Remote.handle_catch_up(remote, from, data) do
       {:replace, data, remote} ->
@@ -229,7 +231,7 @@ defmodule Firenest.ReplicatedState.Server do
   end
 
   def handle_remote({:broadcast, data}, from, state) do
-    %{remote: remote, store: store, hander: handler} = state
+    %__MODULE__{remote: remote, store: store, handler: handler} = state
 
     case Remote.handle_broadcast(remote, from, data) do
       {:diff, puts, updates, deletes, remote} ->
@@ -248,7 +250,7 @@ defmodule Firenest.ReplicatedState.Server do
 
   @impl true
   def handle_replica(change, remote_ref, state) do
-    %{remote: remote, store: store} = state
+    %__MODULE__{remote: remote, store: store} = state
 
     case remote_replica(change, remote_ref, remote) do
       {:ok, remote} ->

@@ -19,7 +19,7 @@ defmodule Firenest.ReplicatedState.RemoteTest do
   test "up and down", %{remote: remote} do
     assert {:ok, remote} = Remote.up(remote, :node1, 0)
     assert {:catch_up, 0, remote} = Remote.up(remote, :node2, 5)
-    assert {:delete, :node1, _remote} = Remote.down(remote, :node1)
+    assert {:delete, _remote} = Remote.down(remote, :node1)
   end
 
   describe "remote_changes: :ignore" do

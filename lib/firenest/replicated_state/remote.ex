@@ -49,7 +49,7 @@ defmodule Firenest.ReplicatedState.Remote do
   def permdown(%__MODULE__{clocks: clocks} = state, ref) do
     %{^ref => _} = clocks
     clocks = Map.delete(clocks, ref)
-    {:delete, ref, %{state | clocks: clocks}}
+    {:delete, %{state | clocks: clocks}}
   end
 
   def catch_up(%__MODULE__{clock: current} = state, old_clock, state_getter)
