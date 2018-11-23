@@ -269,8 +269,7 @@ defmodule Firenest.PubSub.Supervisor do
   end
 
   def init({pubsub, topology, options}) do
-    partitions =
-      options[:partitions] || System.schedulers_online() |> Kernel./(4) |> Float.ceil() |> trunc()
+    partitions = options[:partitions] || ceil(System.schedulers_online() / 4)
 
     {module, function} = options[:dispatcher] || {Firenest.PubSub.Dispatcher, :dispatch}
 

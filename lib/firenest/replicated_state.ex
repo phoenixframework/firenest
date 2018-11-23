@@ -342,6 +342,7 @@ defmodule Firenest.ReplicatedState.Supervisor do
     partitions = Keyword.get(opts, :partitions, 1)
     topology = Keyword.fetch!(opts, :topology)
     handler = Keyword.fetch!(opts, :handler)
+
     names =
       for partition <- 0..(partitions - 1),
           do: Module.concat(name, "Partition" <> Integer.to_string(partition))
