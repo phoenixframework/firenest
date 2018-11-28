@@ -29,12 +29,30 @@ defmodule Firenest.PubSub do
   even if they are not running the PubSub service. In case you
   want to broadcast to a subset of your topology, consider creating
   multiple topologies.
+
+  ## Custom dispatching
+
+  Firenest.PubSub allows developers to perform custom dispatching
+  by passing a `dispatcher` module to the broadcast functions.
+  The dispatcher must be available on all nodes running the PubSub
+  system. The `dispatch/3` function of the given module will be
+  invoked with the subscriptions entries, the broadcaster identifier
+  and the message to broadcast and it is responsible for local message
+  deliveries.
+
+  You may want to use the dispatcher to perform special delivery for
+  certain subscriptions. This can be done by passing a `value` during
+  subscriptions. For instance, Phoenix Channels use a custom `value`
+  to provide "fastlaning", allowing messages broadcast to thousands
+  or even millions of users to be encoded once and written directly
+  to sockets instead of being encoded per channel.
   """
 
   @typedoc "An atom identifying the pubsub system."
   @type t :: atom()
   @type topic :: term()
   @type from :: pid()
+  @type dispatcher :: module
 
   defmodule BroadcastError do
     defexception [:message]
@@ -57,18 +75,13 @@ defmodule Firenest.PubSub do
       Partitioning provides vertical scalability on machines with multiple
       cores, allowing subscriptions and broadcasts to happen concurrently.
       By default uses one partition for every 4 cores.
-    * `:dispatcher` - a module and function tuple that is called every time
-      there is a broadcast and must perform local message deliveries. It
-      receives the subscriptions entries, the broadcaster identifier and the
-      message to broadcast
 
   """
   @spec child_spec(options) :: Supervisor.child_spec()
         when options: [
                name: t,
                topology: Firenest.Topology.t(),
-               partitions: pos_integer(),
-               dispatcher: {module, function}
+               partitions: pos_integer()
              ]
   defdelegate child_spec(options), to: Firenest.PubSub.Supervisor
 
@@ -86,17 +99,10 @@ defmodule Firenest.PubSub do
   A process may subscribe to the same topic more than once.
   In such cases, messages will be delivered twice.
 
-  ## The dispatching value
-
-  An optional `value` may be given which may be used by custom
-  dispatchers (see `child_spec/1`). For instance, Phoenix Channels
-  use a custom `value` to provide "fastlaning", allowing messages
-  broadcast to thousands or even millions of users to be encoded
-  once and written directly to sockets instead of being encoded per
-  channel.
-
-  Unless you are implementing custom dispatching rules, you can
-  safely ignore the `value` argument.
+  The `value` argument is used for those implementing custom
+  dispatching as explained in the "Custom Disapatching" section
+  in the module docs. Unless you are implementing custom
+  dispatching rules, you can safely ignore the `value` argument.
   """
   @spec subscribe(t, topic, term) :: :ok
   def subscribe(pubsub, topic, value \\ nil) when is_atom(pubsub) do
@@ -121,13 +127,15 @@ defmodule Firenest.PubSub do
   Returns `:ok` or `{:error, reason}` in case of failures in
   the distributed brodcast.
   """
-  @spec broadcast(t, topic | [topic], term) :: :ok | {:error, term}
-  def broadcast(pubsub, topic, message) when is_atom(pubsub) do
+  @spec broadcast(t, topic | [topic], term, dispatcher) :: :ok | {:error, term}
+  def broadcast(pubsub, topic, message, dispatcher \\ __MODULE__)
+      when is_atom(pubsub) and is_atom(dispatcher) do
     topics = List.wrap(topic)
-    {:ok, {topology, dispatcher, module, function}} = Registry.meta(pubsub, :pubsub)
+    {:ok, {topology, remote}} = Registry.meta(pubsub, :pubsub)
+    broadcast = {:broadcast, topics, message, dispatcher}
 
-    with :ok <- Firenest.Topology.broadcast(topology, dispatcher, {:broadcast, topics, message}) do
-      dispatch(pubsub, :none, topics, message, module, function)
+    with :ok <- Firenest.Topology.broadcast(topology, remote, broadcast) do
+      dispatch(pubsub, :none, topics, message, dispatcher)
     end
   end
 
@@ -137,9 +145,9 @@ defmodule Firenest.PubSub do
   Returns `:ok` or raises `Firenest.PubSub.BroadcastError` in case of
   failures in the distributed brodcast.
   """
-  @spec broadcast!(t, topic | [topic], term) :: :ok | no_return
-  def broadcast!(pubsub, topic, message) do
-    case broadcast(pubsub, topic, message) do
+  @spec broadcast!(t, topic | [topic], term, dispatcher) :: :ok | no_return
+  def broadcast!(pubsub, topic, message, dispatcher \\ __MODULE__) do
+    case broadcast(pubsub, topic, message, dispatcher) do
       :ok -> :ok
       {:error, error} -> raise BroadcastError, "broadcast!/3 failed with #{inspect(error)}"
     end
@@ -155,13 +163,15 @@ defmodule Firenest.PubSub do
   Returns `:ok` or `{:error, reason}` in case of failures in
   the distributed brodcast.
   """
-  @spec broadcast_from(t, pid, topic | [topic], term) :: :ok | {:error, term()}
-  def broadcast_from(pubsub, pid, topic, message) when is_atom(pubsub) and is_pid(pid) do
+  @spec broadcast_from(t, pid, topic | [topic], term, dispatcher) :: :ok | {:error, term()}
+  def broadcast_from(pubsub, pid, topic, message, dispatcher \\ __MODULE__)
+      when is_atom(pubsub) and is_pid(pid) and is_atom(dispatcher) do
     topics = List.wrap(topic)
-    {:ok, {topology, dispatcher, module, function}} = Registry.meta(pubsub, :pubsub)
+    {:ok, {topology, remote}} = Registry.meta(pubsub, :pubsub)
+    broadcast = {:broadcast, topics, message, dispatcher}
 
-    with :ok <- Firenest.Topology.broadcast(topology, dispatcher, {:broadcast, topics, message}) do
-      dispatch(pubsub, pid, topics, message, module, function)
+    with :ok <- Firenest.Topology.broadcast(topology, remote, broadcast) do
+      dispatch(pubsub, pid, topics, message, dispatcher)
     end
   end
 
@@ -175,9 +185,9 @@ defmodule Firenest.PubSub do
   Returns `:ok` or raises `Firenest.PubSub.BroadcastError` in case of
   failures in the distributed brodcast.
   """
-  @spec broadcast_from!(t, pid, topic | [topic], term) :: :ok | no_return
-  def broadcast_from!(pubsub, pid, topic, message) do
-    case broadcast_from(pubsub, pid, topic, message) do
+  @spec broadcast_from!(t, pid, topic | [topic], term, dispatcher) :: :ok | no_return
+  def broadcast_from!(pubsub, pid, topic, message, dispatcher \\ __MODULE__) do
+    case broadcast_from(pubsub, pid, topic, message, dispatcher) do
       :ok -> :ok
       {:error, error} -> raise BroadcastError, "broadcast_from!/4 failed with #{inspect(error)}"
     end
@@ -188,11 +198,10 @@ defmodule Firenest.PubSub do
 
   Returns `:ok`.
   """
-  @spec local_broadcast(t, topic | [topic], term) :: :ok
-  def local_broadcast(pubsub, topic, message) when is_atom(pubsub) do
-    topics = List.wrap(topic)
-    {:ok, {_, _, module, function}} = Registry.meta(pubsub, :pubsub)
-    dispatch(pubsub, :none, topics, message, module, function)
+  @spec local_broadcast(t, topic | [topic], term, dispatcher) :: :ok
+  def local_broadcast(pubsub, topic, message, dispatcher \\ __MODULE__)
+      when is_atom(pubsub) and is_atom(dispatcher) do
+    dispatch(pubsub, :none, List.wrap(topic), message, dispatcher)
   end
 
   @doc """
@@ -202,16 +211,27 @@ defmodule Firenest.PubSub do
   to `pid`. This is typically invoked with `pid == self()` so messages
   are not delivered to the broadcasting process.
   """
-  @spec local_broadcast_from(t, pid, topic | [topic], term) :: :ok
-  def local_broadcast_from(pubsub, from, topic, message) when is_atom(pubsub) and is_pid(from) do
-    topics = List.wrap(topic)
-    {:ok, {_, _, module, function}} = Registry.meta(pubsub, :pubsub)
-    dispatch(pubsub, from, topics, message, module, function)
+  @spec local_broadcast_from(t, pid, topic | [topic], term, dispatcher) :: :ok
+  def local_broadcast_from(pubsub, from, topic, message, dispatcher \\ __MODULE__)
+      when is_atom(pubsub) and is_pid(from) and is_atom(dispatcher) do
+    dispatch(pubsub, from, List.wrap(topic), message, dispatcher)
   end
 
-  defp dispatch(pubsub, from, topics, message, module, function) do
-    mfa = {module, function, [from, message]}
-    Enum.each(topics, &Registry.dispatch(pubsub, &1, mfa))
+  @doc false
+  def dispatch(entries, from, message) do
+    Enum.each(entries, fn
+      {pid, _} when pid == from -> :ok
+      {pid, _} -> send(pid, message)
+    end)
+  end
+
+  defp dispatch(pubsub, from, topics, message, dispatcher) do
+    mfa = {dispatcher, :dispatch, [from, message]}
+
+    for topic <- topics do
+      Registry.dispatch(pubsub, topic, mfa)
+    end
+
     :ok
   end
 end
@@ -221,32 +241,22 @@ defmodule Firenest.PubSub.Dispatcher do
 
   use GenServer
 
-  def dispatch(entries, from, message) do
-    Enum.each(entries, fn
-      {pid, _} when pid == from ->
-        :ok
-
-      {pid, _} ->
-        send(pid, message)
-    end)
+  def start_link({name, pubsub}) do
+    GenServer.start_link(__MODULE__, pubsub, name: name)
   end
 
-  def start_link({name, pubsub, module, function}) do
-    GenServer.start_link(__MODULE__, {pubsub, module, function}, name: name)
+  def init(pubsub) do
+    {:ok, pubsub}
   end
 
-  def init(state) do
-    {:ok, state}
-  end
-
-  def handle_info({:broadcast, topics, message}, state) do
-    {pubsub, module, function} = state
+  def handle_info({:broadcast, topics, message, dispatcher}, pubsub) do
+    mfargs = {dispatcher, :dispatch, [:none, message]}
 
     for topic <- topics do
-      Registry.dispatch(pubsub, topic, {module, function, [:none, message]})
+      Registry.dispatch(pubsub, topic, mfargs)
     end
 
-    {:noreply, state}
+    {:noreply, pubsub}
   end
 end
 
@@ -272,12 +282,10 @@ defmodule Firenest.PubSub.Supervisor do
     partitions =
       options[:partitions] || System.schedulers_online() |> Kernel./(4) |> Float.ceil() |> trunc()
 
-    {module, function} = options[:dispatcher] || {Firenest.PubSub.Dispatcher, :dispatch}
-
-    dispatcher = Module.concat(pubsub, "Dispatcher")
+    remote = Module.concat(pubsub, "Dispatcher")
 
     registry = [
-      meta: [pubsub: {topology, dispatcher, module, function}],
+      meta: [pubsub: {topology, remote}],
       partitions: partitions,
       keys: :duplicate,
       name: pubsub
@@ -285,7 +293,7 @@ defmodule Firenest.PubSub.Supervisor do
 
     children = [
       {Registry, registry},
-      {Firenest.PubSub.Dispatcher, {dispatcher, pubsub, module, function}}
+      {Firenest.PubSub.Dispatcher, {remote, pubsub}}
     ]
 
     Supervisor.init(children, strategy: :rest_for_one)

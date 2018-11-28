@@ -160,7 +160,7 @@ defmodule Firenest.PubSubTest do
     end
   end
 
-  test "Subscribing to topics that are tuples with complex terms", %{pubsub: pubsub} do
+  test "subscribing to topics that are tuples with complex terms", %{pubsub: pubsub} do
     topic = {:game_world, 2, :user, "Nicholas Flamel", :inventory}
     P.subscribe(pubsub, topic)
     :ok = P.local_broadcast(pubsub, topic, :hello)
@@ -218,18 +218,20 @@ defmodule Firenest.PubSubTest do
       opts = [name: :pubsub_with_partitions, topology: topology, partitions: 0]
       {:error, _} = start_supervised({P, opts})
     end
+  end
 
-    test "supports custom dispatching", %{topology: topology, topic: topic, test: test} do
-      opts = [name: test, topology: topology, dispatcher: {__MODULE__, :custom_dispatcher}]
+  describe "custom dispatching" do
+    test "is passed on subscribe and broadcast", %{topology: topology, topic: topic, test: test} do
+      opts = [name: test, topology: topology]
       {:ok, _} = start_supervised({P, opts})
 
       P.subscribe(test, topic, :register)
-      P.broadcast_from(test, self(), topic, :message)
+      P.broadcast_from(test, self(), topic, :message, __MODULE__)
       assert_received {:custom_dispatcher, :register, pid, :message} when pid == self()
     end
   end
 
-  def custom_dispatcher(entries, from, message) do
+  def dispatch(entries, from, message) do
     for {pid, value} <- entries, do: send(pid, {:custom_dispatcher, value, from, message})
   end
 
