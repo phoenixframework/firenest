@@ -32,42 +32,6 @@ defmodule Firenest.Topology.Erlang do
 
   defdelegate child_spec(opts), to: Firenest.Topology.Erlang.Server
 
-  def connect(topology, node) do
-    fn ->
-      ref = subscribe(topology, self())
-
-      case :net_kernel.connect_node(node) do
-        true -> node_connected?(topology, node) or wait_until({:nodeup, ref, node})
-        false -> false
-        :ignored -> :ignored
-      end
-    end
-    |> Task.async()
-    |> Task.await(:infinity)
-  end
-
-  def disconnect(topology, node) do
-    fn ->
-      ref = subscribe(topology, self())
-
-      case node_connected?(topology, node) and :erlang.disconnect_node(node) do
-        true -> wait_until({:nodedown, ref, node})
-        false -> false
-        :ignored -> :ignored
-      end
-    end
-    |> Task.async()
-    |> Task.await(:infinity)
-  end
-
-  defp wait_until(msg) do
-    receive do
-      ^msg -> true
-    after
-      @timeout -> false
-    end
-  end
-
   def broadcast(topology, name, :default, message) do
     topology |> node_names() |> Enum.each(&Process.send({name, &1}, message, [:noconnect]))
   end
@@ -103,21 +67,9 @@ defmodule Firenest.Topology.Erlang do
     :ets.lookup_element(topology, :nodes, 3)
   end
 
-  defp node_connected?(topology, node) do
-    ms = [{{{:connected, {node, :_}}, :"$1"}, [], [:"$1"]}]
-    :ets.select_count(topology, ms) == 1
-  end
-
   defp node_ref_connected?(topology, node_ref) do
     ms = [{{{:connected, node_ref}, :"$1"}, [], [:"$1"]}]
     :ets.select_count(topology, ms) == 1
-  end
-
-  # Subscribing to the topology events is private right now,
-  # we can make it public if necessary but sync_named/3 should
-  # be enough for all purposes.
-  defp subscribe(topology, pid) do
-    GenServer.call(topology, {:subscribe, pid})
   end
 end
 
@@ -160,7 +112,6 @@ defmodule Firenest.Topology.Erlang.Server do
       monitors: %{},
       nodes: %{},
       local_names: %{},
-      subscribers: %{},
       topology: topology
     }
 
@@ -169,12 +120,6 @@ defmodule Firenest.Topology.Erlang.Server do
   end
 
   ## Local messages
-
-  def handle_call({:subscribe, pid}, _from, state) do
-    ref = Process.monitor(pid)
-    state = put_in(state.subscribers[ref], pid)
-    {:reply, ref, state}
-  end
 
   # Receives the sync monitor command from a local process and broadcast
   # this monitor is up in all known instances of this topology.
@@ -213,12 +158,8 @@ defmodule Firenest.Topology.Erlang.Server do
 
   def handle_info({:DOWN, ref, _, _, _}, %{monitors: monitors} = state) do
     case monitors do
-      %{^ref => _} ->
-        {:noreply, remove_dead_monitor(state, ref)}
-
-      %{} ->
-        {_, state} = pop_in(state.subscribers[ref])
-        {:noreply, state}
+      %{^ref => _} -> {:noreply, remove_dead_monitor(state, ref)}
+      %{} -> {:noreply, state}
     end
   end
 
@@ -385,8 +326,7 @@ defmodule Firenest.Topology.Erlang.Server do
     %{
       topology: topology,
       nodes: nodes,
-      local_names: local_names,
-      subscribers: subscribers
+      local_names: local_names
     } = state
 
     # Add the node, notify the node, notify the services.
@@ -394,7 +334,6 @@ defmodule Firenest.Topology.Erlang.Server do
     node_ref = {node, id}
     persist_nodes_adding(topology, nodes, node_ref)
 
-    _ = for {ref, pid} <- subscribers, do: send(pid, {:nodeup, ref, node})
     _ = for {_, name} <- monitors, do: local_monitor_up(local_names, node_ref, name)
     %{state | nodes: nodes}
   end
@@ -403,8 +342,7 @@ defmodule Firenest.Topology.Erlang.Server do
     %{
       topology: topology,
       nodes: nodes,
-      local_names: local_names,
-      subscribers: subscribers
+      local_names: local_names
     } = state
 
     # Notify the services, remove the node, notify the node.
@@ -413,8 +351,6 @@ defmodule Firenest.Topology.Erlang.Server do
     _ = for {name, _} <- remote_names, do: local_monitor_down(local_names, node_ref, name)
 
     persist_nodes_removing(topology, nodes, node_ref)
-
-    _ = for {ref, pid} <- subscribers, do: send(pid, {:nodedown, ref, node})
     %{state | nodes: nodes}
   end
 

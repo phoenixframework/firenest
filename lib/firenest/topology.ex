@@ -4,7 +4,6 @@ defmodule Firenest.Topology do
 
   The topology is the building block in Firenest. It specifies:
 
-    * How nodes are connected and discovered
     * How failures are handled (temporary and permanent)
     * How messages are sent across nodes
     * How messages are broadcast in the cluster
@@ -71,16 +70,6 @@ defmodule Firenest.Topology do
   to broadcast the message. Currently `plane` is always `:default`.
   """
   @callback send(t(), node_ref(), name(), plane(), message :: term()) :: :ok | {:error, term()}
-
-  @doc """
-  Asks the topology to connect to the given node.
-  """
-  @callback connect(t(), node()) :: true | false | :ignore
-
-  @doc """
-  Asks the topology to disconnect from the given node.
-  """
-  @callback disconnect(t(), node()) :: true | false | :ignore
 
   @doc """
   Syncs the given `pid` across the topology using its name.
@@ -166,31 +155,6 @@ defmodule Firenest.Topology do
   def send(topology, {node, _} = node_ref, name, message)
       when is_atom(topology) and is_atom(node) and is_atom(name) do
     adapter!(topology).send(topology, node_ref, name, :default, message)
-  end
-
-  @doc """
-  Asks the topology to connect to the given node.
-
-  It returns `true` in case of success (or if the node is already
-  connected), `false` in case of failure and `:ignored` if the node
-  is not online or if the operation is not supported.
-  """
-  @spec connect(t(), node()) :: true | false | :ignored
-  def connect(topology, node) when is_atom(topology) and is_atom(node) do
-    adapter!(topology).connect(topology, node)
-  end
-
-  @doc """
-  Asks the topology to disconnect from the given node.
-
-  It returns `true` if the nodes are no longer connected. This
-  means it will also return `true` if nodes were never connected in
-  the first place. It returns `:ignored` if the node is not online
-  or if the operation is not supported.
-  """
-  @spec disconnect(t(), node()) :: true | false | :ignored
-  def disconnect(topology, node) when is_atom(topology) and is_atom(node) do
-    adapter!(topology).disconnect(topology, node)
   end
 
   @doc """

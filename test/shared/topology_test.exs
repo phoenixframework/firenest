@@ -110,38 +110,6 @@ defmodule Firenest.TopologyTest do
     end
   end
 
-  describe "connection" do
-    @describetag :connection
-
-    @node :"subscribe@127.0.0.1"
-    test "may be set and managed explicitly", %{topology: topology} do
-      # No node yet
-      refute T.disconnect(topology, @node)
-      refute @node in Keyword.keys(T.nodes(topology))
-
-      # Start the node but not firenest
-      Firenest.Test.spawn_nodes([@node])
-      refute @node in Keyword.keys(T.nodes(topology))
-
-      # Finally start firenest
-      Firenest.Test.start_firenest([@node], adapter: T.adapter!(topology))
-      assert T.connect(topology, @node)
-      assert @node in Keyword.keys(T.nodes(topology))
-
-      # Connect should still return true
-      assert T.connect(topology, @node)
-
-      # Now let's diconnect
-      assert T.disconnect(topology, @node)
-      refute @node in Keyword.keys(T.nodes(topology))
-
-      # And we can't connect it back because it is permanently down
-      refute T.connect(topology, @node)
-    after
-      T.disconnect(topology, @node)
-    end
-  end
-
   describe "sync_named/2" do
     @describetag :sync_named
 
@@ -208,8 +176,9 @@ defmodule Firenest.TopologyTest do
       start_sync_named_on(topology, node_ref, evaluator, test)
       assert_receive {:named_up, ^node_ref, ^test}
 
-      # And now let's disconnect from it
-      assert T.disconnect(topology, @node)
+      # And now let's shut it down
+      cmd = quote do: System.halt(0)
+      T.send(topology, node_ref, evaluator, {:eval_quoted, cmd})
       assert_receive {:named_down, ^node_ref, ^test}
 
       # And now let's kill the named process running on third
